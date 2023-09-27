@@ -9,9 +9,9 @@ st.set_page_config(layout="wide")
 def home_page():
     import pandas as pd
 
-    project_df = pd.read_excel('/home/talha/Downloads/PS - Competencies Management(1).xlsx',sheet_name='Proj-details')
-    employee_df = pd.read_excel('/home/talha/Downloads/PS - Competencies Management(1).xlsx',sheet_name='Res-skills')
-    domain_df = pd.read_excel('/home/talha/Downloads/PS - Competencies Management(1).xlsx',sheet_name='Proj. Dashboard',skiprows=1)
+    project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
+    employee_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Res-skills')
+    domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
 
     unnamed_columns = [col for col in project_df.columns if col.startswith('Unnamed:')]
     named_columns = ['Missing Projects (267)','Level']
