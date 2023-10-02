@@ -1,117 +1,11 @@
 import streamlit as st
 
-st.set_page_config(layout="wide")
+# Check if the data is already loaded
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
 
-
-#adding a single-line text input widget
-
-# Define a function for each page
-def home_page():
-    import pandas as pd
-
-    project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
-    employee_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Res-skills')
-    domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
-
-    unnamed_columns = [col for col in project_df.columns if col.startswith('Unnamed:')]
-    named_columns = ['Missing Projects (267)','Level']
-    project_df = project_df.drop(columns=unnamed_columns+named_columns)
-
-    unnamed_columns = [col for col in employee_df.columns if col.startswith('Unnamed:')]
-    named_columns = ['Type','Category']
-    employee_df = employee_df.drop(columns=unnamed_columns+named_columns)
-
-
-
-    st.title('Smart Search')
-    skill = st.text_input('Enter Skill: ', 'e.g .NET OR .net')
-
-
-    if skill == 'e.g .NET OR .net':
-        skill= None
-
-    client = st.text_input('Enter client name: ', 'Pepsi')
-
-    if client == 'Pepsi':
-        client= None
-    #displaying the entered text
-
-    if skill is None and client is None:
-        st.write("")
-
-    elif skill is not None and client is not None:
-        st.write("Please ENTER Only one at a time")
-
-    elif skill:
-        st.write('Data matches with skill : ', skill)
-        project_df.dropna(subset=['Competency (338)'],inplace=True)
-
-        mask = project_df['Competency (338)'].str.contains(skill)
-
-        # # Use the mask to filter the DataFrame
-        result_df = project_df[mask]
-
-        # Add a button to show all rows
-        st.markdown("---")
-        # st.sidebar.title(':blue[Project Details]')
-        st.header('_Projects Matched_')
-        if st.button('Show All Projects'):
-            st.dataframe(result_df)
-
-        else:
-            st.dataframe(result_df.head(5))
-
-
-        projects = result_df['Project'].unique().tolist()
-
-        employee_df.dropna(subset=['Competency (398)'],inplace=True)
-
-        mask = employee_df['Competency (398)'].str.contains(skill)
-
-        # # Use the mask to filter the DataFrame
-        result_df = employee_df[mask]
-
-        # st.sidebar.title(':blue[Employee Details]')
-        st.markdown("---")
-        st.header('Employees Matched')
-        if st.button('Show All Employees'):
-            st.dataframe(result_df)
-        else:
-            st.dataframe(result_df.head(5))
-
-
-        result_df = domain_df[domain_df['Project'].isin(projects)]
-        # st.sidebar.title(':blue[Project Domain Details]')
-        st.markdown("---")
-        st.header('Domains Matched')
-
-        if st.button('Show All Domains'):
-            st.dataframe(result_df)
-        else:
-            st.dataframe(result_df.head(5))  
-
-    elif client:
-        # st.set_page_config(layout="wide")
-        st.write('Data matches with client : ', client)
-
-        domain_df.dropna(subset=['Project'],inplace=True)
-
-        mask = domain_df['Project'].str.contains(client)
-
-        # # Use the mask to filter the DataFrame
-        result_df = domain_df[mask]
-        # st.sidebar.title(':blue[Client Details]')
-        st.markdown("---")
-        st.header('Client Matched')
-
-        if st.button('Client Detail'):
-            st.dataframe(result_df)
-        else:
-            st.dataframe(result_df.head(5))  
-
-
-def about_page():
-
+# Load the data only if it's not already loaded
+if not st.session_state.data_loaded:
     import sys
     import os
     import langchain
@@ -136,11 +30,11 @@ def about_page():
 
     from streamlit_chat import message
 
-    
+
 
 
     load_dotenv()
-        
+
     # test that the API key exists
     if os.getenv("OPENAI_API_KEY") is None or os.getenv("OPENAI_API_KEY") == "":
         print("OPENAI_API_KEY is not set")
@@ -183,18 +77,137 @@ def about_page():
                 text_path = path + file
                 loader = TextLoader(text_path)
                 documents.extend(loader.load())
-        
+
     # print(documents)
-    vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings())
+    vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory='db')
     vectordb.persist()
     llm = ChatOpenAI(temperature=0.1, model_name="gpt-3.5-turbo")
     # memory = ConversationBufferMemory(llm=llm, max_token_limit=100)
     retriever = vectordb.as_retriever( search_kwargs={'k': 3})
 
     qa=RetrievalQA.from_chain_type(llm=llm, retriever=retriever, return_source_documents=True, chain_type_kwargs=chain_type_kwargs)
+    st.session_state.qa = qa
+    st.session_state.message = message
+    st.session_state.data_loaded = True
 
 
 
+st.set_page_config(layout="wide")
+
+
+#adding a single-line text input widget
+
+# Define a function for each page
+def home_page():
+    import pandas as pd
+
+    project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
+    employee_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Res-skills')
+    domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
+
+    unnamed_columns = [col for col in project_df.columns if col.startswith('Unnamed:')]
+    named_columns = ['Missing Projects (267)','Level']
+    project_df = project_df.drop(columns=unnamed_columns+named_columns)
+
+    unnamed_columns = [col for col in employee_df.columns if col.startswith('Unnamed:')]
+    named_columns = ['Type','Category']
+    employee_df = employee_df.drop(columns=unnamed_columns+named_columns)
+
+
+
+    st.title('Smart Search')
+    skill = st.text_input('Enter Skill: ', 'e.g .NET OR .net')
+
+
+    if skill == 'e.g .NET OR .net' or skill == '':
+        skill= None
+
+    client = st.text_input('Enter client name: ', 'Pepsi')
+
+    if client == 'Pepsi' or client == '':
+        client= None
+    #displaying the entered text
+    
+
+    if skill is None and client is None:
+        st.write("")
+
+    elif skill is not None and client is not None:
+        st.write("Please ENTER Only one at a time")
+        print(skill)
+        print(client)
+
+    elif skill:
+        st.write('Data matches with skill : ', skill)
+        project_df.dropna(subset=['Competency (338)'],inplace=True)
+
+        mask = project_df['Competency (338)'].str.contains(skill,case=False)
+
+        # # Use the mask to filter the DataFrame
+        result_df = project_df[mask]
+
+        # Add a button to show all rows
+        st.markdown("---")
+        # st.sidebar.title(':blue[Project Details]')
+        st.header('_Projects Matched_')
+        if st.button('Show All Projects'):
+            st.dataframe(result_df)
+
+        else:
+            st.dataframe(result_df.head(5))
+
+
+        projects = result_df['Project'].unique().tolist()
+
+        employee_df.dropna(subset=['Competency (398)'],inplace=True)
+
+        mask = employee_df['Competency (398)'].str.contains(skill,case=False)
+
+        # # Use the mask to filter the DataFrame
+        result_df = employee_df[mask]
+
+        # st.sidebar.title(':blue[Employee Details]')
+        st.markdown("---")
+        st.header('Employees Matched')
+        if st.button('Show All Employees'):
+            st.dataframe(result_df)
+        else:
+            st.dataframe(result_df.head(5))
+
+
+        result_df = domain_df[domain_df['Project'].isin(projects)]
+        # st.sidebar.title(':blue[Project Domain Details]')
+        st.markdown("---")
+        st.header('Domains Matched')
+
+        if st.button('Show All Domains'):
+            st.dataframe(result_df)
+        else:
+            st.dataframe(result_df.head(5))  
+
+    elif client:
+        # st.set_page_config(layout="wide")
+        st.write('Data matches with client : ', client)
+
+        domain_df.dropna(subset=['Project'],inplace=True)
+
+        mask = domain_df['Project'].str.contains(client,case=False)
+
+        # # Use the mask to filter the DataFrame
+        result_df = domain_df[mask]
+        # st.sidebar.title(':blue[Client Details]')
+        st.markdown("---")
+        st.header('Client Matched')
+
+        if st.button('Client Detail'):
+            st.dataframe(result_df)
+        else:
+            st.dataframe(result_df.head(5))  
+
+
+def about_page():
+    qa = st.session_state.qa
+    message = st.session_state.message
     st.header("Sales ChatBot🤖")
 
     if 'responses' not in st.session_state:
