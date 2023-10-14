@@ -8,17 +8,11 @@ if 'data_loaded' not in st.session_state:
 if not st.session_state.data_loaded:
     import sys
     import os
-    import langchain
     from langchain.document_loaders import PyPDFLoader
     from langchain.document_loaders import Docx2txtLoader
     from langchain.document_loaders import TextLoader
     from langchain.embeddings import OpenAIEmbeddings
     from langchain.vectorstores import Chroma
-    from langchain.llms import OpenAI
-    from langchain.chat_models import ChatOpenAI
-    from langchain.chains import ConversationalRetrievalChain,RetrievalQA
-    from langchain.memory import ConversationBufferMemory
-    from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
     from langchain.prompts import PromptTemplate
     from dotenv import load_dotenv
 
@@ -30,8 +24,20 @@ if not st.session_state.data_loaded:
 
     from streamlit_chat import message
 
+    import pandas as pd
+    import spacy
+    nlp = spacy.load('en_core_web_sm')
+    
+    
+    domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
+    project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
+    client_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='KM')
 
+    domain_df.dropna(subset=['Project'],inplace=True)
+    project_df.dropna(subset=['Project'],inplace=True)
+    client_df.dropna(subset=['Project','Client'],inplace=True)
 
+    rule_df = pd.concat([domain_df['Project'], project_df['Project'], client_df['Project'],client_df['Client']], axis=0)
 
     load_dotenv()
 
@@ -54,40 +60,46 @@ if not st.session_state.data_loaded:
     Question: {question}
     """
 
-    PROMPT = PromptTemplate(
+    prompt = PromptTemplate(
         template=prompt_template, input_variables=["context", "question"]
     )
 
-    chain_type_kwargs = {"prompt": PROMPT}
 
 
-    documents=[]
-    paths = ["profiles/","projects/","case_studies/"]
-    for path in paths:
-        for file in os.listdir(path):
-            if file.endswith(".pdf"):
-                pdf_path = path + file
-                loader = PyPDFLoader(pdf_path)
-                documents.extend(loader.load())
-            elif file.endswith('.docx') or file.endswith('.doc'):
-                doc_path = path + file
-                loader = Docx2txtLoader(doc_path)
-                documents.extend(loader.load())
-            elif file.endswith('.txt'):
-                text_path = path + file
-                loader = TextLoader(text_path)
-                documents.extend(loader.load())
+    db_directory = 'db'
 
-    # print(documents)
-    vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory='db')
-    vectordb.persist()
-    llm = ChatOpenAI(temperature=0.1, model_name="gpt-3.5-turbo")
-    # memory = ConversationBufferMemory(llm=llm, max_token_limit=100)
+    if os.path.exists(db_directory) and os.path.isdir(db_directory):
+        vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+        
+    else:
+        print('in if condition')
+        documents=[]
+        paths = ["profiles/","projects/","case_studies/"]
+        for path in paths:
+            for file in os.listdir(path):
+                if file.endswith(".pdf"):
+                    pdf_path = path + file
+                    loader = PyPDFLoader(pdf_path)
+                    documents.extend(loader.load())
+                elif file.endswith('.docx') or file.endswith('.doc'):
+                    doc_path = path + file
+                    loader = Docx2txtLoader(doc_path)
+                    documents.extend(loader.load())
+                elif file.endswith('.txt'):
+                    text_path = path + file
+                    loader = TextLoader(text_path)
+                    documents.extend(loader.load())
+                    
+        vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
+        vectordb.persist()
+    
     retriever = vectordb.as_retriever( search_kwargs={'k': 3})
-
-    qa=RetrievalQA.from_chain_type(llm=llm, retriever=retriever, return_source_documents=True, chain_type_kwargs=chain_type_kwargs)
-    st.session_state.qa = qa
+    
+    st.session_state.retriever = retriever
+    st.session_state.prompt = prompt
     st.session_state.message = message
+    st.session_state.rule_df = rule_df
+    st.session_state.nlp = nlp
     st.session_state.data_loaded = True
 
 
@@ -95,7 +107,42 @@ if not st.session_state.data_loaded:
 st.set_page_config(layout="wide")
 
 
-#adding a single-line text input widget
+#Maksing funtion
+def apply_masking(text,rule_df,nlp):
+    import re
+    
+    text = re.sub(r'\\n', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    text=text.replace('•','')
+    
+    doc = nlp(text)
+    replacement = 'xyz'
+
+    ents = []
+    for e in doc.ents:
+        if e.label_ == 'ORG':
+            ents.append(e.text)
+
+    for row in rule_df:
+        # Create a regular expression pattern to match standalone substrings with case insensitivity
+        pattern = re.compile(r'(?<!•\w)' + re.escape(row) + r'(?!•\w)', re.IGNORECASE)
+
+        # Use the sub() method to replace all occurrences of the standalone substring
+        text = pattern.sub(replacement, text)
+
+        
+    # text=text.replace('•','')
+    for entity in set(ents):
+        entity = entity.replace('•','')
+
+        # Create a regular expression pattern to match standalone substrings with case insensitivity
+        pattern = re.compile(r'(?<!•\w)' + re.escape(entity) + r'(?!•\w)', re.IGNORECASE)
+
+        # Use the sub() method to replace all occurrences of the standalone substring
+        text = pattern.sub(replacement, text)
+
+    # print(set(ents))
+    return text
 
 # Define a function for each page
 def home_page():
@@ -206,8 +253,18 @@ def home_page():
 
 
 def about_page():
-    qa = st.session_state.qa
+    import openai
+    
+    
+    retriever = st.session_state.retriever
+    prompt = st.session_state.prompt
     message = st.session_state.message
+    nlp = st.session_state.nlp
+    
+    rule_df = st.session_state.rule_df
+    
+    replacement = 'xyz'
+    
     st.header("Sales ChatBot🤖")
 
     if 'responses' not in st.session_state:
@@ -227,7 +284,18 @@ def about_page():
         query = st.text_input("Query: ", key="input")
         if query:
             with st.spinner("typing..."):
-                response = qa({'query':query})['result']
+                docs = retriever.get_relevant_documents(
+                    query
+                )
+                context = ''
+                for i, text in enumerate(docs):
+                    
+                    text = apply_masking(text.page_content,rule_df,nlp)
+                    
+                    context += text
+                prompt = prompt.format(context=context, question=query)
+                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
+                response = completion.choices[0].message.content
             st.session_state.requests.append(query)
             st.session_state.responses.append(response) 
     with response_container:
