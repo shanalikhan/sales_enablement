@@ -13,6 +13,7 @@ if not st.session_state.data_loaded:
     from langchain.document_loaders import TextLoader
     from langchain.embeddings import OpenAIEmbeddings
     from langchain.vectorstores import Chroma
+    from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
     from langchain.prompts import PromptTemplate
     from dotenv import load_dotenv
 
@@ -32,12 +33,21 @@ if not st.session_state.data_loaded:
     domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
     project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
     client_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='KM')
+    invoices_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='invoices')
 
     domain_df.dropna(subset=['Project'],inplace=True)
     project_df.dropna(subset=['Project'],inplace=True)
     client_df.dropna(subset=['Project','Client'],inplace=True)
+    invoices_df.dropna(subset=['project','client'],inplace=True)
 
-    rule_df = pd.concat([domain_df['Project'], project_df['Project'], client_df['Project'],client_df['Client']], axis=0)
+    client_df['Project']=client_df['Project'].apply(lambda x: x.split('-')[0])
+    invoices_df['project']=invoices_df['project'].apply(lambda x: x.split('-')[0])
+
+
+    rule_df = pd.concat([domain_df['Project'], project_df['Project'], client_df['Project'],client_df['Client'], invoices_df['project'],invoices_df['client']], axis=0)
+
+
+    rule_df=rule_df.unique()
 
     load_dotenv()
 
@@ -52,7 +62,7 @@ if not st.session_state.data_loaded:
 
 
     prompt_template = """you are helpful Ai assisstant that is helping sales people of software company for sales enablement you have employee profiles and project details and project case studies. 
-    Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, 
+    Use the following context to answer the question at the end. If you don't know the answer, just say that you don't know, output should be in json where threre will be two keys one is boolean named as found that will be true if you found the answer else will be false and second key named as answer will be your response if there is any.
     don't try to make up an answer.
 
     {context}
@@ -64,17 +74,21 @@ if not st.session_state.data_loaded:
         template=prompt_template, input_variables=["context", "question"]
     )
 
+    text_splitter = text_splitter = RecursiveCharacterTextSplitter(
+    # Set a really small chunk size, just to show.
+    chunk_size = 1000,
+    chunk_overlap  = 50
+    )
 
-
-    db_directory = 'db'
+    db_directory = 'case_study_db'
+    db_directory2 = 'calls_db'
 
     if os.path.exists(db_directory) and os.path.isdir(db_directory):
-        vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+        casedb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
         
     else:
-        print('in if condition')
         documents=[]
-        paths = ["profiles/","projects/","case_studies/"]
+        paths = ["projects/","case_studies/"]
         for path in paths:
             for file in os.listdir(path):
                 if file.endswith(".pdf"):
@@ -90,12 +104,41 @@ if not st.session_state.data_loaded:
                     loader = TextLoader(text_path)
                     documents.extend(loader.load())
                     
-        vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
-        vectordb.persist()
+        casedb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
+        casedb.persist()
     
-    retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+    casedb_retriever = casedb.as_retriever( search_kwargs={'k': 3})
     
-    st.session_state.retriever = retriever
+    if os.path.exists(db_directory2) and os.path.isdir(db_directory2):
+        callsdb = Chroma(persist_directory=db_directory2,embedding_function=OpenAIEmbeddings())
+        
+    else:
+        documents=[]
+        paths = ["tkxel_cals/"]
+        for path in paths:
+            for file in os.listdir(path):
+                if file.endswith(".pdf"):
+                    pdf_path = path + file
+                    loader = PyPDFLoader(pdf_path)
+                    documents.extend(loader.load())
+                elif file.endswith('.docx') or file.endswith('.doc'):
+                    doc_path = path + file
+                    loader = Docx2txtLoader(doc_path)
+                    documents.extend(loader.load())
+                elif file.endswith('.txt'):
+                    text_path = path + file
+                    loader = TextLoader(text_path)
+                    documents.extend(loader.load())
+        documents = text_splitter.split_documents(documents)
+        callsdb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory2)
+        callsdb.persist()
+    
+    callsdb_retriever = callsdb.as_retriever( search_kwargs={'k': 3})
+    
+    
+    
+    st.session_state.casedb_retriever = casedb_retriever
+    st.session_state.callsdb_retriever = callsdb_retriever
     st.session_state.prompt = prompt
     st.session_state.message = message
     st.session_state.rule_df = rule_df
@@ -125,7 +168,7 @@ def apply_masking(text,rule_df,nlp):
 
     for row in rule_df:
         # Create a regular expression pattern to match standalone substrings with case insensitivity
-        pattern = re.compile(r'(?<!•\w)' + re.escape(row) + r'(?!•\w)', re.IGNORECASE)
+        pattern = re.compile(r'(?<!\w)' + re.escape(row) + r'(?!\w)', re.IGNORECASE)
 
         # Use the sub() method to replace all occurrences of the standalone substring
         text = pattern.sub(replacement, text)
@@ -136,7 +179,7 @@ def apply_masking(text,rule_df,nlp):
         entity = entity.replace('•','')
 
         # Create a regular expression pattern to match standalone substrings with case insensitivity
-        pattern = re.compile(r'(?<!•\w)' + re.escape(entity) + r'(?!•\w)', re.IGNORECASE)
+        pattern = re.compile(r'(?<!\w)' + re.escape(entity) + r'(?!\w)', re.IGNORECASE)
 
         # Use the sub() method to replace all occurrences of the standalone substring
         text = pattern.sub(replacement, text)
@@ -254,9 +297,11 @@ def home_page():
 
 def about_page():
     import openai
+    import json
     
     
-    retriever = st.session_state.retriever
+    casedb_retriever = st.session_state.casedb_retriever
+    callsdb_retriever = st.session_state.callsdb_retriever
     prompt = st.session_state.prompt
     message = st.session_state.message
     nlp = st.session_state.nlp
@@ -284,7 +329,7 @@ def about_page():
         query = st.text_input("Query: ", key="input")
         if query:
             with st.spinner("typing..."):
-                docs = retriever.get_relevant_documents(
+                docs = casedb_retriever.get_relevant_documents(
                     query
                 )
                 context = ''
@@ -293,9 +338,30 @@ def about_page():
                     text = apply_masking(text.page_content,rule_df,nlp)
                     
                     context += text
-                prompt = prompt.format(context=context, question=query)
-                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
-                response = completion.choices[0].message.content
+                case_prompt = prompt.format(context=context, question=query)
+                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+                response = json.loads(completion.choices[0].message.content)
+                if response['found'] == False:
+                    docs = callsdb_retriever.get_relevant_documents(
+                        query
+                    )
+                    context = ''
+                    for i, text in enumerate(docs):
+
+                        text = apply_masking(text.page_content,rule_df,nlp)
+
+                        context += text
+                    prompt = prompt.format(context=context, question=query)
+                    
+                    completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
+                    response = json.loads(completion.choices[0].message.content)
+                    try:
+                        response=response['answer']
+                    except:
+                        response = 'i am not able to answer right now please try again'
+                else:
+                    response = response['answer']
+                    
             st.session_state.requests.append(query)
             st.session_state.responses.append(response) 
     with response_container:
