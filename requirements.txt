@@ -10,3 +10,4 @@ streamlit-chat==0.1.1
 python-dotenv==1.0.0
 tiktoken==0.4.0
 chromadb==0.4.9
+openai==0.28.0
