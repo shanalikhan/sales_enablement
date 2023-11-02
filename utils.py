@@ -1,8 +1,18 @@
 import pandas as pd
 import re
+import os
 from tqdm import tqdm
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 from create_db import DatabaseManager
+
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
+from langchain.docstore.document import Document
+
+from moviepy.editor import *
+from pydub.utils import mediainfo
+
+import whisper
 
 class DataProcessor:
     def __init__(self, db_name='entities.db'):
@@ -74,6 +84,8 @@ class DataProcessor:
     @staticmethod
     def get_sentence_split(text_list, file):
         jump = 20
+        splits_documents = []
+
         for index, i in enumerate(range(0, len(text_list), jump)):
             file_index = str(index) + '_' + file
             check = i + jump
@@ -81,7 +93,10 @@ class DataProcessor:
                 splitted_text = '.'.join(text_list[i:])
             else:
                 splitted_text = '.'.join(text_list[i:check])
-        return splitted_text, file_index
+
+            splits_documents.append(Document(page_content=splitted_text, metadata={"source": file_index}))
+
+        return splits_documents
 
     def apply_masking(self, text, rule_df, metadata):
         text = re.sub(r'\\n', '', text)
@@ -105,6 +120,109 @@ class DataProcessor:
 
     def close(self):
         self.db_manager.close_connection()
+
+class DocumentProcessor:
+    def __init__(self, db_name='entities.db'):
+        self.db_manager = DatabaseManager(db_name)
+
+    
+    def close(self):
+        self.db_manager.close_connection()
+
+class ChromaManager:
+    def __init__(self):
+        pass
+
+    def create_vector_db(self, db_directory, paths, data_processor, constants, comprehend):
+        if os.path.exists(db_directory) and os.path.isdir(db_directory):
+            vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+            
+        else:
+            documents=[]
+            
+            for path in paths:
+                for file in tqdm(os.listdir(path)):
+                    
+                    loader = data_processor.get_text_from_file(file,path)
+                    text_list = loader.load()[0].page_content.split('.')
+                    documents.extend(data_processor.get_sentence_split(text_list, file))
+
+            vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
+            vectordb.persist()
+            vectordb_data  = vectordb.get()
+
+            data_processor.get_entities_and_dump(vectordb_data, comprehend, constants.ner_threshold)
+
+        retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+
+        return retriever 
+
+    def update_vector_db(self, db_directory, paths, data_processor, constants, comprehend):
+        if os.path.exists(db_directory) and os.path.isdir(db_directory):
+            vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+            documents=[]
+            
+            for path in paths:
+                for file in tqdm(os.listdir(path)):
+                    
+                    loader = data_processor.get_text_from_file(file,path)
+                    text_list = loader.load()[0].page_content.split('.')
+                    documents.extend(data_processor.get_sentence_split(text_list, file))
+            
+            vectordb.add_documents(documents)
+            vectordb.persist()
+
+        retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+
+        return retriever 
+
+class AudioProcessor:
+    def __init__(self):
+        pass
+
+    def convert_mp4_to_mp3(video_path, output_path):
+        try:
+            # Load video using moviepy
+            video = VideoFileClip(video_path)
+            
+            # Extract audio from video
+            audio = video.audio
+            
+            # Export audio as mp3
+            audio.write_audiofile(output_path, codec='mp3')
+            
+            # Close the clips
+            video.close()
+            audio.close()
+            return True
+        except Exception as e:
+            return False
+
+    def check_audio_channels(audio_path):
+        # Get audio information using pydub's mediainfo
+        info = mediainfo(audio_path)
+        
+        # Return the number of channels
+        return int(info['channels']) 
+
+class WhisperManager:
+    def __init__(self):
+        self.model = whisper.load_model("large")
+
+    def transcribe_audio(audio_path, output_path):
+        try:
+            result = model.transcribe(audio_path,language="en")
+            text  = result['text']
+
+            f = open(output_path.replace('mp3','txt'),'w')
+            f.write(str(text))
+            f.close()
+            print('file updated:',file)
+
+            return True
+        except Exception as e:
+            return False
+    
 
 # Example usage:
 if __name__ == '__main__':

@@ -15,9 +15,8 @@ if st.session_state.data_loaded == False:
     import os
     from tqdm import tqdm
     
-    from langchain.docstore.document import Document
-    from langchain.embeddings import OpenAIEmbeddings
-    from langchain.vectorstores import Chroma
+    
+    
     from langchain.prompts import PromptTemplate
     from langchain.schema import (
         SystemMessage,
@@ -35,8 +34,9 @@ if st.session_state.data_loaded == False:
     session = boto3.Session(profile_name='AE')
     comprehend = session.client('comprehend')
     ### Preprodata_processorcessors ###
-    from utils import DataProcessor
+    from utils import DataProcessor, ChromaManager
     data_processor = DataProcessor()
+    chroma_manager = ChromaManager()
     ### db manager ###
     from create_db import DatabaseManager
     db_manager = DatabaseManager()
@@ -64,59 +64,16 @@ if st.session_state.data_loaded == False:
 
     
     print('Case studies data processing started -------------------------------------------------->')
-    if os.path.exists(constants.db_directory) and os.path.isdir(constants.db_directory):
-        casedb = Chroma(persist_directory=constants.db_directory,embedding_function=OpenAIEmbeddings())
-        
-    else:
-        documents=[]
-        paths = [constants.projects_path, constants.case_studies_path]
-        for path in paths:
-            for file in tqdm(os.listdir(path)):
-                
-                loader = data_processor.get_text_from_file(file,path)
-                documents.extend(loader.load())
-
-        casedb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=constants.db_directory)
-        casedb.persist()
-        casedb_data  = casedb.get()
-
-        data_processor.get_entities_and_dump(casedb_data, comprehend, constants.ner_threshold)
-
-    casedb_retriever = casedb.as_retriever( search_kwargs={'k': 3})
+    
+    paths = [constants.projects_path, constants.case_studies_path]
+    casedb_retriever = chroma_manager.create_vector_db(constants.db_directory, paths, data_processor, constants, comprehend)
 
     print('Audio data processing started -------------------------------------------------->')
-    
-    if os.path.exists(constants.db_directory2) and os.path.isdir(constants.db_directory2):
-        callsdb = Chroma(persist_directory=constants.db_directory2,embedding_function=OpenAIEmbeddings())
-        
-    else:
-        documents=[]
-        paths = [constants.calls_path]
-        jump = 20
 
-        for path in paths:
-            for file in tqdm(os.listdir(path)):
+    paths = [constants.calls_path]
+    callsdb_retriever = chroma_manager.create_vector_db(constants.db_directory2, paths, data_processor, constants, comprehend)
 
-                loader = data_processor.get_text_from_file(file,path)
-                    
-                text_list = loader.load()[0].page_content.split('.')
-                
-                for index, i in enumerate(range(0, len(text_list), jump)):
-                    file_index = str(index) + '_' + file
-                    check = i + jump
-                    if check > len(text_list):
-                        splitted_text = '.'.join(text_list[i:])
-                    else:
-                        splitted_text = '.'.join(text_list[i:check])
-                    documents.append(Document(page_content=splitted_text, metadata={"source": file_index}))
 
-        callsdb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=constants.db_directory2)
-        callsdb.persist()
-        callsdb_data  = callsdb.get()
-
-        data_processor.get_entities_and_dump(callsdb_data, comprehend, constants.ner_threshold)
-    
-    callsdb_retriever = callsdb.as_retriever( search_kwargs={'k': 3})
     
     
     
