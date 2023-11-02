@@ -1,56 +1,47 @@
 import streamlit as st
 
 # Check if the data is already loaded
+
+
+
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
+
 # Load the data only if it's not already loaded
-if not st.session_state.data_loaded:
+if st.session_state.data_loaded == False:
+    st.session_state.data_loaded = True
     import sys
     import os
-    from langchain.document_loaders import PyPDFLoader
-    from langchain.document_loaders import Docx2txtLoader
-    from langchain.document_loaders import TextLoader
-    from langchain.embeddings import OpenAIEmbeddings
-    from langchain.vectorstores import Chroma
-    from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
+    from tqdm import tqdm
+    
+    
+    
     from langchain.prompts import PromptTemplate
-    from dotenv import load_dotenv
-
     from langchain.schema import (
         SystemMessage,
         HumanMessage,
         AIMessage
     )
 
+    from dotenv import load_dotenv
+
     from streamlit_chat import message
 
-    import pandas as pd
-    import spacy
-    nlp = spacy.load('en_core_web_sm')
-    
-    
-    domain_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj. Dashboard',skiprows=1)
-    project_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='Proj-details')
-    client_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='KM')
-    invoices_df = pd.read_excel('PS - Competencies Management.xlsx',sheet_name='invoices')
+    import constants
 
-    domain_df.dropna(subset=['Project'],inplace=True)
-    project_df.dropna(subset=['Project'],inplace=True)
-    client_df.dropna(subset=['Project','Client'],inplace=True)
-    invoices_df.dropna(subset=['project','client'],inplace=True)
+    ### Preprodata_processorcessors ###
+    from utils import DataProcessor, ChromaManager
+    data_processor = DataProcessor()
+    chroma_manager = ChromaManager()
+    ### db manager ###
+    from create_db import DatabaseManager
+    db_manager = DatabaseManager()
+    db_manager.create_tables()
+    db_manager.close_connection()
 
-    client_df['Project']=client_df['Project'].apply(lambda x: x.split('-')[0])
-    invoices_df['project']=invoices_df['project'].apply(lambda x: x.split('-')[0])
-
-
-    rule_df = pd.concat([domain_df['Project'], project_df['Project'], client_df['Project'],client_df['Client'], invoices_df['project'],invoices_df['client']], axis=0)
-
-
-    rule_df=rule_df.unique()
 
     load_dotenv()
-
     # test that the API key exists
     if os.getenv("OPENAI_API_KEY") is None or os.getenv("OPENAI_API_KEY") == "":
         print("OPENAI_API_KEY is not set")
@@ -60,132 +51,33 @@ if not st.session_state.data_loaded:
 
     # os.environ["OPENAI_API_KEY"] = "sk-"
 
-
-    prompt_template = """you are helpful Ai assisstant that is helping sales people of software company for sales enablement you have employee profiles and project details and project case studies. 
-    Use the following context to answer the question at the end. If you don't know the answer, just say that you don't know, output should be in json where threre will be two keys one is boolean named as found that will be true if you found the answer else will be false and second key named as answer will be your response if there is any.
-    don't try to make up an answer.
-
-    {context}
-
-    Question: {question}
-    """
-
-    prompt = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
-    )
-
-    text_splitter = text_splitter = RecursiveCharacterTextSplitter(
-    # Set a really small chunk size, just to show.
-    chunk_size = 1000,
-    chunk_overlap  = 50
-    )
-
-    db_directory = 'case_study_db'
-    db_directory2 = 'calls_db'
-
-    if os.path.exists(db_directory) and os.path.isdir(db_directory):
-        casedb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
-        
-    else:
-        documents=[]
-        paths = ["projects/","case_studies/"]
-        for path in paths:
-            for file in os.listdir(path):
-                if file.endswith(".pdf"):
-                    pdf_path = path + file
-                    loader = PyPDFLoader(pdf_path)
-                    documents.extend(loader.load())
-                elif file.endswith('.docx') or file.endswith('.doc'):
-                    doc_path = path + file
-                    loader = Docx2txtLoader(doc_path)
-                    documents.extend(loader.load())
-                elif file.endswith('.txt'):
-                    text_path = path + file
-                    loader = TextLoader(text_path)
-                    documents.extend(loader.load())
-                    
-        casedb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
-        casedb.persist()
     
-    casedb_retriever = casedb.as_retriever( search_kwargs={'k': 3})
+    print('Case studies data processing started -------------------------------------------------->')
     
-    if os.path.exists(db_directory2) and os.path.isdir(db_directory2):
-        callsdb = Chroma(persist_directory=db_directory2,embedding_function=OpenAIEmbeddings())
-        
-    else:
-        documents=[]
-        paths = ["tkxel_cals/"]
-        for path in paths:
-            for file in os.listdir(path):
-                if file.endswith(".pdf"):
-                    pdf_path = path + file
-                    loader = PyPDFLoader(pdf_path)
-                    documents.extend(loader.load())
-                elif file.endswith('.docx') or file.endswith('.doc'):
-                    doc_path = path + file
-                    loader = Docx2txtLoader(doc_path)
-                    documents.extend(loader.load())
-                elif file.endswith('.txt'):
-                    text_path = path + file
-                    loader = TextLoader(text_path)
-                    documents.extend(loader.load())
-        documents = text_splitter.split_documents(documents)
-        callsdb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory2)
-        callsdb.persist()
-    
-    callsdb_retriever = callsdb.as_retriever( search_kwargs={'k': 3})
+    paths = [constants.projects_path, constants.case_studies_path]
+    casedb_retriever = chroma_manager.create_vector_db(constants.db_directory, paths, data_processor, constants)
+
+    print('Audio data processing started -------------------------------------------------->')
+
+    paths = [constants.calls_path]
+    callsdb_retriever = chroma_manager.create_vector_db(constants.db_directory2, paths, data_processor, constants)
+
+
     
     
     
     st.session_state.casedb_retriever = casedb_retriever
     st.session_state.callsdb_retriever = callsdb_retriever
-    st.session_state.prompt = prompt
     st.session_state.message = message
-    st.session_state.rule_df = rule_df
-    st.session_state.nlp = nlp
     st.session_state.data_loaded = True
+    data_processor.close()
+
+    # st.session_state.comprehend = comprehend
 
 
 
 st.set_page_config(layout="wide")
 
-
-#Maksing funtion
-def apply_masking(text,rule_df,nlp):
-    import re
-    
-    text = re.sub(r'\\n', '', text)
-    text = re.sub(r'\s+', ' ', text)
-    text=text.replace('•','')
-    
-    doc = nlp(text)
-    replacement = 'xyz'
-
-    ents = []
-    for e in doc.ents:
-        if e.label_ == 'ORG':
-            ents.append(e.text)
-
-    for row in rule_df:
-        # Create a regular expression pattern to match standalone substrings with case insensitivity
-        pattern = re.compile(r'(?<!\w)' + re.escape(row) + r'(?!\w)', re.IGNORECASE)
-
-        # Use the sub() method to replace all occurrences of the standalone substring
-        text = pattern.sub(replacement, text)
-
-        
-    # text=text.replace('•','')
-    for entity in set(ents):
-        entity = entity.replace('•','')
-
-        # Create a regular expression pattern to match standalone substrings with case insensitivity
-        pattern = re.compile(r'(?<!\w)' + re.escape(entity) + r'(?!\w)', re.IGNORECASE)
-
-        # Use the sub() method to replace all occurrences of the standalone substring
-        text = pattern.sub(replacement, text)
-
-    # print(set(ents))
-    return text
 
 # Define a function for each page
 def home_page():
@@ -294,83 +186,144 @@ def home_page():
         else:
             st.dataframe(result_df.head(5))  
 
+def upload_handler(file, calls=False):
+    import os
+    from utils import DataProcessor, ChromaManager, AudioProcessor
+    import constants
+    import shutil
+    from tqdm import tqdm
 
-def about_page():
+    direc_name = constants.upload_directory
+    data_processor = DataProcessor()
+    chroma_manager = ChromaManager()
+    audio_processor = AudioProcessor()
+
+    file_path = os.path.join(os.getcwd(),direc_name, file.name)
+    if file.name.endswith('txt') or file.name.endswith('pdf') or file.name.endswith('docs'):
+        try:
+            source = os.path.join(constants.upload_directory,file.name)
+            destination = constants.case_studies_path
+            with open(file_path, "wb") as f:
+                f.write(file.getvalue())
+
+            paths = [constants.upload_casestudies_path]
+            
+            casedb_retriever = chroma_manager.update_vector_db(constants.db_directory, paths, data_processor, constants)
+            
+            st.session_state.casedb_retriever = casedb_retriever
+            
+            shutil.move(source, destination)
+            
+            st.success(f"File {file.name} saved!")
+        except Exception as e:
+            print(e)
+            st.success(f"File {file.name}not able to save or processed!")
+    else:
+        try:
+            source = os.path.join(constants.upload_directory,file.name)
+            destination = constants.calls_path
+            
+            with open(file_path, "wb") as f:
+                f.write(file.getvalue())
+
+            paths = [constants.upload_casestudies_path]
+            print('here')
+
+            for path in paths:
+                for file in tqdm(os.listdir(path)):
+                    if file.endswith('.mp4'):
+                        mp3_path = file_path.replace('.mp4','.mp3')
+                        if audio_processor.convert_mp4_to_mp3(file_path,mp3_path):
+                            print('\n\naudio processsed \n\n')
+                            if audio_processor.transcribe_audio(mp3_path):
+                                print('Done')
+                                try:
+                                    os.remove(mp3_path)
+                                    print(f"The file {mp3_path} has been removed successfully")
+                                    os.remove(file_path)
+                                    print(f"The file {mp3_path} has been removed successfully")
+                                except FileNotFoundError:
+                                    print("The file does not exist")
+                                except PermissionError:
+                                    print("You do not have permission to delete this file")
+                                except Exception as e:
+                                    print(f"An error occurred: {e}")
+            callsdb_retriever = chroma_manager.update_vector_db(constants.db_directory2, paths, data_processor, constants)
+            
+            st.session_state.callsdb_retriever = callsdb_retriever
+            
+            shutil.move(source, destination)
+            
+            st.success(f"File {file.name} saved!")
+        except Exception as e:
+            print(e)
+            st.success(f"File {file.name}not able to save or processed!")
+
+
+
+
+def upload():
+    st.title("File Upload for Case Studies and sales Calls")
+
+    # Upload widget for case studies
+    st.subheader("Upload a Case Study (PDF,TEXT,DOCS) only")
+    case_study_file = st.file_uploader("Choose a video file", type=["txt", "pdf", "docs"])
+    if case_study_file:
+        upload_handler(case_study_file)
+
+    # Upload widget for calls
+    st.subheader("Upload a sales Call (Video or MP3 audio)")
+    call_file = st.file_uploader("Choose a video or audio file", type=["mp4", "mkv", "avi", "mov", "mp3"])
+    if call_file:
+        upload_handler(call_file)
+
+def chatbot():
     import openai
     import json
-    
-    
-    casedb_retriever = st.session_state.casedb_retriever
-    callsdb_retriever = st.session_state.callsdb_retriever
-    prompt = st.session_state.prompt
-    message = st.session_state.message
-    nlp = st.session_state.nlp
-    
-    rule_df = st.session_state.rule_df
-    
-    replacement = 'xyz'
-    
-    st.header("Sales ChatBot🤖")
+    from utils import LLM
+    llm = LLM()    
+    try:
+        
+        
+        casedb_retriever = st.session_state.casedb_retriever
+        callsdb_retriever = st.session_state.callsdb_retriever
+        message = st.session_state.message
+        
+        
+        st.header("Sales ChatBot🤖")
 
-    if 'responses' not in st.session_state:
-        st.session_state['responses'] = ["How can I assist you?"]
+        if 'responses' not in st.session_state:
+            st.session_state['responses'] = ["How can I assist you?"]
 
-    if 'requests' not in st.session_state:
-        st.session_state['requests'] = []
+        if 'requests' not in st.session_state:
+            st.session_state['requests'] = []
 
 
-    # container for chat history
-    response_container = st.container()
-    # container for text box
-    textcontainer = st.container()
+        # container for chat history
+        response_container = st.container()
+        # container for text box
+        textcontainer = st.container()
 
 
-    with textcontainer:
-        query = st.text_input("Query: ", key="input")
-        if query:
-            with st.spinner("typing..."):
-                docs = casedb_retriever.get_relevant_documents(
-                    query
-                )
-                context = ''
-                for i, text in enumerate(docs):
-                    
-                    text = apply_masking(text.page_content,rule_df,nlp)
-                    
-                    context += text
-                case_prompt = prompt.format(context=context, question=query)
-                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
-                response = json.loads(completion.choices[0].message.content)
-                if response['found'] == False:
-                    docs = callsdb_retriever.get_relevant_documents(
-                        query
-                    )
-                    context = ''
-                    for i, text in enumerate(docs):
+        with textcontainer:
+            query = st.text_input("Query: ", key="input")
+            if query:
+                with st.spinner("typing..."):
+                    response = llm.QA(query, casedb_retriever,callsdb_retriever)
+                st.session_state.requests.append(query)
+                st.session_state.responses.append(response) 
+        with response_container:
+            if st.session_state['responses']:
 
-                        text = apply_masking(text.page_content,rule_df,nlp)
+                for i in range(len(st.session_state['responses'])):
+                    message(st.session_state['responses'][i],key=str(i))
+                    if i < len(st.session_state['requests']):
+                        message(st.session_state["requests"][i], is_user=True,key=str(i)+ '_user')
+    except Exception as e:
+        print(e)
 
-                        context += text
-                    prompt = prompt.format(context=context, question=query)
-                    
-                    completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
-                    response = json.loads(completion.choices[0].message.content)
-                    try:
-                        response=response['answer']
-                    except:
-                        response = 'i am not able to answer right now please try again'
-                else:
-                    response = response['answer']
-                    
-            st.session_state.requests.append(query)
-            st.session_state.responses.append(response) 
-    with response_container:
-        if st.session_state['responses']:
-
-            for i in range(len(st.session_state['responses'])):
-                message(st.session_state['responses'][i],key=str(i))
-                if i < len(st.session_state['requests']):
-                    message(st.session_state["requests"][i], is_user=True,key=str(i)+ '_user')
+    finally:
+        llm.close()
 
 # Initialize session state
 if 'page' not in st.session_state:
@@ -379,16 +332,22 @@ if 'page' not in st.session_state:
 # Create buttons for page selection in the sidebar
 home_button = st.sidebar.button("Smart Search")
 about_button = st.sidebar.button("Chatbot QnA")
+upload_button = st.sidebar.button("Upload Files")
 
 # Determine which button was clicked and display the corresponding page
 if home_button:
-    st.session_state.page = 'Home'
+    st.session_state.page = 'smart search'
 elif about_button:
-    st.session_state.page = 'About'
+    st.session_state.page = 'chatbot'
+elif upload_button:
+    st.session_state.page = 'Upload'
 
 
 # Display the selected page
-if st.session_state.page == 'Home':
+if st.session_state.page == 'smart search':
     home_page()
-elif st.session_state.page == 'About':
-    about_page()
+elif st.session_state.page == 'chatbot':
+    chatbot()
+elif st.session_state.page == 'Upload':
+    upload()
+    
