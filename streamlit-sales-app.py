@@ -29,10 +29,7 @@ if st.session_state.data_loaded == False:
     from streamlit_chat import message
 
     import constants
-    ### NER AWS COMPREHEND
-    import boto3
-    session = boto3.Session(profile_name='AE')
-    comprehend = session.client('comprehend')
+
     ### Preprodata_processorcessors ###
     from utils import DataProcessor, ChromaManager
     data_processor = DataProcessor()
@@ -43,7 +40,6 @@ if st.session_state.data_loaded == False:
     db_manager.create_tables()
     db_manager.close_connection()
 
-    rule_df = data_processor.load_dataframes(constants.file_name)
 
     load_dotenv()
     # test that the API key exists
@@ -55,23 +51,16 @@ if st.session_state.data_loaded == False:
 
     # os.environ["OPENAI_API_KEY"] = "sk-"
 
-
-    prompt_template = data_processor.get_prompt_template()
-
-    prompt = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
-    )
-
     
     print('Case studies data processing started -------------------------------------------------->')
     
     paths = [constants.projects_path, constants.case_studies_path]
-    casedb_retriever = chroma_manager.create_vector_db(constants.db_directory, paths, data_processor, constants, comprehend)
+    casedb_retriever = chroma_manager.create_vector_db(constants.db_directory, paths, data_processor, constants)
 
     print('Audio data processing started -------------------------------------------------->')
 
     paths = [constants.calls_path]
-    callsdb_retriever = chroma_manager.create_vector_db(constants.db_directory2, paths, data_processor, constants, comprehend)
+    callsdb_retriever = chroma_manager.create_vector_db(constants.db_directory2, paths, data_processor, constants)
 
 
     
@@ -79,9 +68,7 @@ if st.session_state.data_loaded == False:
     
     st.session_state.casedb_retriever = casedb_retriever
     st.session_state.callsdb_retriever = callsdb_retriever
-    st.session_state.prompt = prompt
     st.session_state.message = message
-    st.session_state.rule_df = rule_df
     st.session_state.data_loaded = True
     data_processor.close()
 
@@ -199,29 +186,80 @@ def home_page():
         else:
             st.dataframe(result_df.head(5))  
 
-def handle_case_study(file):
+def upload_handler(file, calls=False):
     import os
-    # import PyPDF2
-    # from docx import Document
+    from utils import DataProcessor, ChromaManager, AudioProcessor
+    import constants
+    import shutil
+    from tqdm import tqdm
 
-    with open(os.path.join(os.getcwd(), file.name), "wb") as f:
-        f.write(file.getvalue())
-    st.success(f"File {file.name} saved!")
-    
+    direc_name = constants.upload_directory
+    data_processor = DataProcessor()
+    chroma_manager = ChromaManager()
+    audio_processor = AudioProcessor()
 
-# Function to handle uploaded call videos or audios
-def handle_call(file):
-    import os
-    # Check the file type to determine if it's a video or audio
-    with open(os.path.join(os.getcwd(), file.name), "wb") as f:
-        f.write(file.getvalue())
-    st.success(f"File {file.name} saved!")
+    file_path = os.path.join(os.getcwd(),direc_name, file.name)
+    if file.name.endswith('txt') or file.name.endswith('pdf') or file.name.endswith('docs'):
+        try:
+            source = os.path.join(constants.upload_directory,file.name)
+            destination = constants.case_studies_path
+            with open(file_path, "wb") as f:
+                f.write(file.getvalue())
 
-    if file.type == "audio/mp3":
-        st.audio(file)
+            paths = [constants.upload_casestudies_path]
+            
+            casedb_retriever = chroma_manager.update_vector_db(constants.db_directory, paths, data_processor, constants)
+            
+            st.session_state.casedb_retriever = casedb_retriever
+            
+            shutil.move(source, destination)
+            
+            st.success(f"File {file.name} saved!")
+        except Exception as e:
+            print(e)
+            st.success(f"File {file.name}not able to save or processed!")
     else:
-        st.video(file)
-    
+        try:
+            source = os.path.join(constants.upload_directory,file.name)
+            destination = constants.calls_path
+            
+            with open(file_path, "wb") as f:
+                f.write(file.getvalue())
+
+            paths = [constants.upload_casestudies_path]
+            print('here')
+
+            for path in paths:
+                for file in tqdm(os.listdir(path)):
+                    if file.endswith('.mp4'):
+                        mp3_path = file_path.replace('.mp4','.mp3')
+                        if audio_processor.convert_mp4_to_mp3(file_path,mp3_path):
+                            print('\n\naudio processsed \n\n')
+                            if audio_processor.transcribe_audio(mp3_path):
+                                print('Done')
+                                try:
+                                    os.remove(mp3_path)
+                                    print(f"The file {mp3_path} has been removed successfully")
+                                    os.remove(file_path)
+                                    print(f"The file {mp3_path} has been removed successfully")
+                                except FileNotFoundError:
+                                    print("The file does not exist")
+                                except PermissionError:
+                                    print("You do not have permission to delete this file")
+                                except Exception as e:
+                                    print(f"An error occurred: {e}")
+            callsdb_retriever = chroma_manager.update_vector_db(constants.db_directory2, paths, data_processor, constants)
+            
+            st.session_state.callsdb_retriever = callsdb_retriever
+            
+            shutil.move(source, destination)
+            
+            st.success(f"File {file.name} saved!")
+        except Exception as e:
+            print(e)
+            st.success(f"File {file.name}not able to save or processed!")
+
+
 
 
 def upload():
@@ -231,30 +269,26 @@ def upload():
     st.subheader("Upload a Case Study (PDF,TEXT,DOCS) only")
     case_study_file = st.file_uploader("Choose a video file", type=["txt", "pdf", "docs"])
     if case_study_file:
-        handle_case_study(case_study_file)
+        upload_handler(case_study_file)
 
     # Upload widget for calls
     st.subheader("Upload a sales Call (Video or MP3 audio)")
     call_file = st.file_uploader("Choose a video or audio file", type=["mp4", "mkv", "avi", "mov", "mp3"])
     if call_file:
-        handle_call(call_file)
+        upload_handler(call_file)
 
 def chatbot():
+    import openai
+    import json
+    from utils import LLM
+    llm = LLM()    
     try:
-        import openai
-        import json
-        from utils import DataProcessor
-
-        data_processor = DataProcessor()
         
         
         casedb_retriever = st.session_state.casedb_retriever
         callsdb_retriever = st.session_state.callsdb_retriever
-        prompt = st.session_state.prompt
         message = st.session_state.message
         
-        
-        rule_df = st.session_state.rule_df
         
         st.header("Sales ChatBot🤖")
 
@@ -275,39 +309,7 @@ def chatbot():
             query = st.text_input("Query: ", key="input")
             if query:
                 with st.spinner("typing..."):
-                    docs = casedb_retriever.get_relevant_documents(
-                        query
-                    )
-                    context = ''
-                    for i, text in enumerate(docs):
-                        
-                        text = data_processor.apply_masking(text.page_content, rule_df, text.metadata)
-                        
-                        context += text
-                    case_prompt = prompt.format(context=context, question=query)
-                    completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
-                    response = json.loads(completion.choices[0].message.content)
-                    if response['found'] == False:
-                        docs = callsdb_retriever.get_relevant_documents(
-                            query
-                        )
-                        context = ''
-                        for i, text in enumerate(docs):
-
-                            text = data_processor.apply_masking(text.page_content, rule_df, text.metadata)
-
-                            context += text
-                        calls_prompt = prompt.format(context=context, question=query)
-                        
-                        completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
-                        response = json.loads(completion.choices[0].message.content)
-                        try:
-                            response=response['answer']
-                        except:
-                            response = 'i am not able to answer right now please try again'
-                    else:
-                        response = response['answer']
-                        
+                    response = llm.QA(query, casedb_retriever,callsdb_retriever)
                 st.session_state.requests.append(query)
                 st.session_state.responses.append(response) 
         with response_container:
@@ -321,7 +323,7 @@ def chatbot():
         print(e)
 
     finally:
-        data_processor.close()
+        llm.close()
 
 # Initialize session state
 if 'page' not in st.session_state:

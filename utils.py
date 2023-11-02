@@ -8,11 +8,19 @@ from create_db import DatabaseManager
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.docstore.document import Document
+### NER AWS COMPREHEND
+import boto3
+session = boto3.Session(profile_name='AE')
+
 
 from moviepy.editor import *
 from pydub.utils import mediainfo
 
 import whisper
+import openai
+import json
+from langchain.prompts import PromptTemplate
+import constants
 
 class DataProcessor:
     def __init__(self, db_name='entities.db'):
@@ -131,9 +139,9 @@ class DocumentProcessor:
 
 class ChromaManager:
     def __init__(self):
-        pass
+        self.comprehend = session.client('comprehend')
 
-    def create_vector_db(self, db_directory, paths, data_processor, constants, comprehend):
+    def create_vector_db(self, db_directory, paths, data_processor, constants):
         if os.path.exists(db_directory) and os.path.isdir(db_directory):
             vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
             
@@ -151,13 +159,13 @@ class ChromaManager:
             vectordb.persist()
             vectordb_data  = vectordb.get()
 
-            data_processor.get_entities_and_dump(vectordb_data, comprehend, constants.ner_threshold)
+            data_processor.get_entities_and_dump(vectordb_data, self.comprehend, constants.ner_threshold)
 
         retriever = vectordb.as_retriever( search_kwargs={'k': 3})
 
         return retriever 
 
-    def update_vector_db(self, db_directory, paths, data_processor, constants, comprehend):
+    def update_vector_db(self, db_directory, paths, data_processor, constants):
         if os.path.exists(db_directory) and os.path.isdir(db_directory):
             vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
             documents=[]
@@ -178,9 +186,9 @@ class ChromaManager:
 
 class AudioProcessor:
     def __init__(self):
-        pass
+        self.model = whisper.load_model("large")
 
-    def convert_mp4_to_mp3(video_path, output_path):
+    def convert_mp4_to_mp3(self, video_path, output_path):
         try:
             # Load video using moviepy
             video = VideoFileClip(video_path)
@@ -197,21 +205,12 @@ class AudioProcessor:
             return True
         except Exception as e:
             return False
-
-    def check_audio_channels(audio_path):
-        # Get audio information using pydub's mediainfo
-        info = mediainfo(audio_path)
-        
-        # Return the number of channels
-        return int(info['channels']) 
-
-class WhisperManager:
-    def __init__(self):
-        self.model = whisper.load_model("large")
-
-    def transcribe_audio(audio_path, output_path):
+    
+    def transcribe_audio(self,audio_path):
         try:
-            result = model.transcribe(audio_path,language="en")
+            output_path = audio_path
+
+            result = self.model.transcribe(audio_path,language="en")
             text  = result['text']
 
             f = open(output_path.replace('mp3','txt'),'w')
@@ -221,7 +220,62 @@ class WhisperManager:
 
             return True
         except Exception as e:
+            print(e)
             return False
+
+    def check_audio_channels(audio_path):
+        # Get audio information using pydub's mediainfo
+        info = mediainfo(audio_path)
+        
+        # Return the number of channels
+        return int(info['channels']) 
+
+class LLM:
+    def __init__(self):
+        self.data_processor = DataProcessor()
+
+        self.prompt = PromptTemplate(
+            template=self.data_processor.get_prompt_template(), input_variables=["context", "question"]
+        )
+        self.rule_df = self.data_processor.load_dataframes(constants.file_name)
+
+    def QA(self, query, casedb_retriever, callsdb_retriever):
+        
+            docs = casedb_retriever.get_relevant_documents(
+                query
+            )
+            context = ''
+            for i, text in enumerate(docs):
+                
+                text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
+                
+                context += text
+            case_prompt = self.prompt.format(context=context, question=query)
+            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+            response = json.loads(completion.choices[0].message.content)
+            if response['found'] == False:
+                docs = callsdb_retriever.get_relevant_documents(
+                    query
+                )
+                context = ''
+                for i, text in enumerate(docs):
+
+                    text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
+
+                    context += text
+                calls_prompt = self.prompt.format(context=context, question=query)
+                
+                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
+                response = json.loads(completion.choices[0].message.content)
+                try:
+                    response=response['answer']
+                except:
+                    response = 'i am not able to answer right now please try again'
+            else:
+                response = response['answer']
+            return response
+    def close(self):
+        self.data_processor.close()
     
 
 # Example usage:

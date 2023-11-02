@@ -1,6 +1,6 @@
 db_directory = 'case_study_db'
 db_directory2 = 'calls_db'
-upload_directory = 'uplaoded'
+upload_directory = 'uploaded'
 
 projects_path = 'projects/'
 case_studies_path = 'case_studies/'
