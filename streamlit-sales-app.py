@@ -68,8 +68,9 @@ if st.session_state.data_loaded == False:
         casedb = Chroma(persist_directory=constants.db_directory,embedding_function=OpenAIEmbeddings())
         
     else:
-        documents=[]
+        
         paths = [constants.projects_path, constants.case_studies_path]
+        documents=[]
         for path in paths:
             for file in tqdm(os.listdir(path)):
                 
@@ -244,12 +245,41 @@ def home_page():
 
 def handle_case_study(file):
     import os
-    # import PyPDF2
-    # from docx import Document
+    from utils import DataProcessor
+    from langchain.docstore.document import Document
+    from langchain.vectorstores import Chroma
+    import constants
 
-    with open(os.path.join(os.getcwd(), file.name), "wb") as f:
-        f.write(file.getvalue())
-    st.success(f"File {file.name} saved!")
+    direc_name = constants.upload_directory
+    try:
+        data_processor = DataProcessor()
+        
+        with open(os.path.join(os.getcwd(),direc_name, file.name), "wb") as f:
+            f.write(file.getvalue())
+
+        if os.path.exists(constants.db_directory2) and os.path.isdir(constants.db_directory2):
+            callsdb = Chroma(persist_directory=constants.db_directory2,embedding_function=OpenAIEmbeddings())
+            documents=[]
+            paths = paths = [constants.upload_casestudies_path]
+            for path in paths:
+                for file in tqdm(os.listdir(path)):
+                    
+                    loader = data_processor.get_text_from_file(file,path)
+                    documents.extend(loader.load())
+
+            casedb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=constants.db_directory)
+            casedb.persist()
+            casedb_data  = casedb.get()
+
+            data_processor.get_entities_and_dump(casedb_data, comprehend, constants.ner_threshold)
+
+            casedb_retriever = casedb.as_retriever( search_kwargs={'k': 3})
+            
+            st.success(f"File {file.name} saved!")
+        else:
+            print('please check db path')
+    except Exception as e:
+        st.success(f"File {file.name}not able to save or processed!")
     
 
 # Function to handle uploaded call videos or audios
