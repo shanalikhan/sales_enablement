@@ -259,42 +259,45 @@ class LLM:
         self.rule_df = self.data_processor.load_dataframes(constants.file_name)
 
     def QA(self, query, casedb_retriever, callsdb_retriever,openai):
-
-        docs = casedb_retriever.get_relevant_documents(
-            query
-        )
-        context = ''
-        for i, text in enumerate(docs):
-            
-            text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
-            
-            context += text
-
-        case_prompt = self.prompt.format(context=context, question=query)
-        
-        completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
-
-        response = json.loads(completion.choices[0].message.content)
-        if response['found'] == False:
-            docs = callsdb_retriever.get_relevant_documents(
+        try:
+            docs = casedb_retriever.get_relevant_documents(
                 query
             )
             context = ''
             for i, text in enumerate(docs):
-
+                
                 text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
-
+                
                 context += text
-            calls_prompt = self.prompt.format(context=context, question=query)
 
-            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
+            case_prompt = self.prompt.format(context=context, question=query)
+            
+            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+
             response = json.loads(completion.choices[0].message.content)
-            try:
-                response=response['answer']
-            except:
-                response = 'i am not able to answer right now please try again'
-        else:
-            response = response['answer']
+            if response['found'] == False:
+                docs = callsdb_retriever.get_relevant_documents(
+                    query
+                )
+                context = ''
+                for i, text in enumerate(docs):
+
+                    text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
+
+                    context += text
+                calls_prompt = self.prompt.format(context=context, question=query)
+
+                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
+                response = json.loads(completion.choices[0].message.content)
+                try:
+                    response=response['answer']
+                except:
+                    response = 'i am not able to answer right now please try again'
+            else:
+                response = response['answer']
+        except Exception as e:
+            print(e)
+            response = 'i am not able to answer right now please try again'
         return response
     def close(self):
         self.data_processor.close()
