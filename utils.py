@@ -17,7 +17,7 @@ from moviepy.editor import *
 from pydub.utils import mediainfo
 
 import whisper
-import openai
+
 import json
 from langchain.prompts import PromptTemplate
 import constants
@@ -25,6 +25,8 @@ import constants
 class DataProcessor:
     def __init__(self, db_name='entities.db'):
         self.db_manager = DatabaseManager(db_name)
+        self.comprehend = session.client('comprehend')
+        self.audio_processor = AudioProcessor()
 
     @staticmethod
     def get_prompt_template():
@@ -59,15 +61,15 @@ class DataProcessor:
         return rule_df
 
     @staticmethod
-    def get_text_from_file(file, path):
-        if file.endswith(".pdf"):
-            pdf_path = path + file
+    def get_text_from_file(file_path):
+        if file_path.endswith(".pdf"):
+            pdf_path = file_path
             loader = PyPDFLoader(pdf_path)
-        elif file.endswith('.docx') or file.endswith('.doc'):
-            doc_path = path + file
+        elif file_path.endswith('.docx') or file_path.endswith('.doc'):
+            doc_path = file_path
             loader = Docx2txtLoader(doc_path)
-        elif file.endswith('.txt'):
-            text_path = path + file
+        elif file_path.endswith('.txt'):
+            text_path = file_path
             loader = TextLoader(text_path)
         return loader
 
@@ -126,67 +128,91 @@ class DataProcessor:
 
         return text
 
-    def close(self):
-        self.db_manager.close_connection()
+    def processFile(self,file):
+        chroma_manager = ChromaManager()
 
-class DocumentProcessor:
-    def __init__(self, db_name='entities.db'):
-        self.db_manager = DatabaseManager(db_name)
+        file_path = os.path.join(os.getcwd(),constants.data, file)
 
-    
+        if file.endswith('txt') or file.endswith('pdf') or file.endswith('docs'):
+            loader = self.get_text_from_file(file_path)
+            text_list = loader.load()[0].page_content.split('.')
+            list_of_documents = self.get_sentence_split(text_list,file)
+
+            chroma_manager.put_in_vectordb(constants.db_directory, list_of_documents)
+
+            vectordb_dict = {'metadatas':[],'documents':[]}
+
+            for doc in list_of_documents:
+                vectordb_dict['documents'].append(doc.page_content)
+                vectordb_dict['metadatas'].append(doc.metadata)
+
+            self.get_entities_and_dump(vectordb_dict, self.comprehend, constants.ner_threshold)
+
+            # print('file data dump in vector db and entities db')
+
+        elif file.endswith('mp4'):
+            print('convert video to mp3 and same process')
+
+        elif file.endswith('mp3'):
+            text = self.audio_processor.transcribe_audio(file_path)
+            text_list = text.split('.')
+            list_of_documents = self.get_sentence_split(text_list,file)
+
+            chroma_manager.put_in_vectordb(constants.db_directory2, list_of_documents)
+
+            vectordb_dict = {'metadatas':[],'documents':[]}
+
+            for doc in list_of_documents:
+                vectordb_dict['documents'].append(doc.page_content)
+                vectordb_dict['metadatas'].append(doc.metadata)
+
+            self.get_entities_and_dump(vectordb_dict, self.comprehend, constants.ner_threshold)
+
+            print('file data dump in vector db and entities db')
+
     def close(self):
         self.db_manager.close_connection()
 
 class ChromaManager:
     def __init__(self):
-        self.comprehend = session.client('comprehend')
+        pass
 
-    def create_vector_db(self, db_directory, paths, data_processor, constants):
-        if os.path.exists(db_directory) and os.path.isdir(db_directory):
-            vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
-            
+    def put_in_vectordb(self, db_directory, documents):
+        try:
+            if os.path.exists(db_directory) and os.path.isdir(db_directory):
+                vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+                vectordb.add_documents(documents)
+
+            else:
+                vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
+            vectordb.persist()
+        except Exception as e:
+            print(e)
+
+    def get_retriever(self):
+        if os.path.exists(constants.db_directory) and os.path.isdir(constants.db_directory):
+            vectordb = Chroma(persist_directory=constants.db_directory,embedding_function=OpenAIEmbeddings())
+
+            case_retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+            print('case study db retriver initialized')
         else:
-            documents=[]
-            
-            for path in paths:
-                for file in tqdm(os.listdir(path)):
-                    
-                    loader = data_processor.get_text_from_file(file,path)
-                    text_list = loader.load()[0].page_content.split('.')
-                    documents.extend(data_processor.get_sentence_split(text_list, file))
+            case_retriever = None
 
-            vectordb = Chroma.from_documents(documents, embedding=OpenAIEmbeddings(),persist_directory=db_directory)
-            vectordb.persist()
-            vectordb_data  = vectordb.get()
+        if os.path.exists(constants.db_directory2) and os.path.isdir(constants.db_directory2):
+            vectordb = Chroma(persist_directory=constants.db_directory2,embedding_function=OpenAIEmbeddings())
 
-            data_processor.get_entities_and_dump(vectordb_data, self.comprehend, constants.ner_threshold)
+            call_retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+            print('calls db retriver initialized')
+        else:
+            call_retriever = None
 
-        retriever = vectordb.as_retriever( search_kwargs={'k': 3})
+        return case_retriever, call_retriever 
 
-        return retriever 
-
-    def update_vector_db(self, db_directory, paths, data_processor, constants):
-        if os.path.exists(db_directory) and os.path.isdir(db_directory):
-            vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
-            documents=[]
-            
-            for path in paths:
-                for file in tqdm(os.listdir(path)):
-                    
-                    loader = data_processor.get_text_from_file(file,path)
-                    text_list = loader.load()[0].page_content.split('.')
-                    documents.extend(data_processor.get_sentence_split(text_list, file))
-            
-            vectordb.add_documents(documents)
-            vectordb.persist()
-
-        retriever = vectordb.as_retriever( search_kwargs={'k': 3})
-
-        return retriever 
 
 class AudioProcessor:
     def __init__(self):
-        self.model = whisper.load_model("large")
+        # self.model = whisper.load_model("large")
+        pass
 
     def convert_mp4_to_mp3(self, video_path, output_path):
         try:
@@ -208,17 +234,10 @@ class AudioProcessor:
     
     def transcribe_audio(self,audio_path):
         try:
-            output_path = audio_path
-
             result = self.model.transcribe(audio_path,language="en")
             text  = result['text']
 
-            f = open(output_path.replace('mp3','txt'),'w')
-            f.write(str(text))
-            f.close()
-            print('file updated:',file)
-
-            return True
+            return text
         except Exception as e:
             print(e)
             return False
@@ -239,41 +258,44 @@ class LLM:
         )
         self.rule_df = self.data_processor.load_dataframes(constants.file_name)
 
-    def QA(self, query, casedb_retriever, callsdb_retriever):
+    def QA(self, query, casedb_retriever, callsdb_retriever,openai):
+
+        docs = casedb_retriever.get_relevant_documents(
+            query
+        )
+        context = ''
+        for i, text in enumerate(docs):
+            
+            text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
+            
+            context += text
+
+        case_prompt = self.prompt.format(context=context, question=query)
         
-            docs = casedb_retriever.get_relevant_documents(
+        completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+
+        response = json.loads(completion.choices[0].message.content)
+        if response['found'] == False:
+            docs = callsdb_retriever.get_relevant_documents(
                 query
             )
             context = ''
             for i, text in enumerate(docs):
-                
+
                 text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
-                
+
                 context += text
-            case_prompt = self.prompt.format(context=context, question=query)
-            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+            calls_prompt = self.prompt.format(context=context, question=query)
+
+            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
             response = json.loads(completion.choices[0].message.content)
-            if response['found'] == False:
-                docs = callsdb_retriever.get_relevant_documents(
-                    query
-                )
-                context = ''
-                for i, text in enumerate(docs):
-
-                    text = self.data_processor.apply_masking(text.page_content, self.rule_df, text.metadata)
-
-                    context += text
-                calls_prompt = self.prompt.format(context=context, question=query)
-                
-                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
-                response = json.loads(completion.choices[0].message.content)
-                try:
-                    response=response['answer']
-                except:
-                    response = 'i am not able to answer right now please try again'
-            else:
-                response = response['answer']
-            return response
+            try:
+                response=response['answer']
+            except:
+                response = 'i am not able to answer right now please try again'
+        else:
+            response = response['answer']
+        return response
     def close(self):
         self.data_processor.close()
     

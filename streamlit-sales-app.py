@@ -1,9 +1,5 @@
 import streamlit as st
 
-# Check if the data is already loaded
-
-
-
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
@@ -15,9 +11,6 @@ if st.session_state.data_loaded == False:
     import os
     from tqdm import tqdm
     
-    
-    
-    from langchain.prompts import PromptTemplate
     from langchain.schema import (
         SystemMessage,
         HumanMessage,
@@ -31,14 +24,8 @@ if st.session_state.data_loaded == False:
     import constants
 
     ### Preprodata_processorcessors ###
-    from utils import DataProcessor, ChromaManager
-    data_processor = DataProcessor()
+    from utils import ChromaManager
     chroma_manager = ChromaManager()
-    ### db manager ###
-    from create_db import DatabaseManager
-    db_manager = DatabaseManager()
-    db_manager.create_tables()
-    db_manager.close_connection()
 
 
     load_dotenv()
@@ -49,30 +36,12 @@ if st.session_state.data_loaded == False:
     else:
         print("OPENAI_API_KEY is set")
 
-    # os.environ["OPENAI_API_KEY"] = "sk-"
-
-    
-    print('Case studies data processing started -------------------------------------------------->')
-    
-    paths = [constants.projects_path, constants.case_studies_path]
-    casedb_retriever = chroma_manager.create_vector_db(constants.db_directory, paths, data_processor, constants)
-
-    print('Audio data processing started -------------------------------------------------->')
-
-    paths = [constants.calls_path]
-    callsdb_retriever = chroma_manager.create_vector_db(constants.db_directory2, paths, data_processor, constants)
-
-
-    
-    
+    casedb_retriever, callsdb_retriever = chroma_manager.get_retriever()
     
     st.session_state.casedb_retriever = casedb_retriever
     st.session_state.callsdb_retriever = callsdb_retriever
     st.session_state.message = message
     st.session_state.data_loaded = True
-    data_processor.close()
-
-    # st.session_state.comprehend = comprehend
 
 
 
@@ -188,79 +157,23 @@ def home_page():
 
 def upload_handler(file, calls=False):
     import os
-    from utils import DataProcessor, ChromaManager, AudioProcessor
+    from utils import DataProcessor 
     import constants
-    import shutil
     from tqdm import tqdm
 
-    direc_name = constants.upload_directory
+
     data_processor = DataProcessor()
-    chroma_manager = ChromaManager()
-    audio_processor = AudioProcessor()
 
-    file_path = os.path.join(os.getcwd(),direc_name, file.name)
+    file_path = os.path.join(os.getcwd(),constants.data, file.name)
+
     if file.name.endswith('txt') or file.name.endswith('pdf') or file.name.endswith('docs'):
-        try:
-            source = os.path.join(constants.upload_directory,file.name)
-            destination = constants.case_studies_path
-            with open(file_path, "wb") as f:
-                f.write(file.getvalue())
-
-            paths = [constants.upload_casestudies_path]
-            
-            casedb_retriever = chroma_manager.update_vector_db(constants.db_directory, paths, data_processor, constants)
-            
-            st.session_state.casedb_retriever = casedb_retriever
-            
-            shutil.move(source, destination)
-            
-            st.success(f"File {file.name} saved!")
-        except Exception as e:
-            print(e)
-            st.success(f"File {file.name}not able to save or processed!")
-    else:
-        try:
-            source = os.path.join(constants.upload_directory,file.name)
-            destination = constants.calls_path
-            
-            with open(file_path, "wb") as f:
-                f.write(file.getvalue())
-
-            paths = [constants.upload_casestudies_path]
-            print('here')
-
-            for path in paths:
-                for file in tqdm(os.listdir(path)):
-                    if file.endswith('.mp4'):
-                        mp3_path = file_path.replace('.mp4','.mp3')
-                        if audio_processor.convert_mp4_to_mp3(file_path,mp3_path):
-                            print('\n\naudio processsed \n\n')
-                            if audio_processor.transcribe_audio(mp3_path):
-                                print('Done')
-                                try:
-                                    os.remove(mp3_path)
-                                    print(f"The file {mp3_path} has been removed successfully")
-                                    os.remove(file_path)
-                                    print(f"The file {mp3_path} has been removed successfully")
-                                except FileNotFoundError:
-                                    print("The file does not exist")
-                                except PermissionError:
-                                    print("You do not have permission to delete this file")
-                                except Exception as e:
-                                    print(f"An error occurred: {e}")
-            callsdb_retriever = chroma_manager.update_vector_db(constants.db_directory2, paths, data_processor, constants)
-            
-            st.session_state.callsdb_retriever = callsdb_retriever
-            
-            shutil.move(source, destination)
-            
-            st.success(f"File {file.name} saved!")
-        except Exception as e:
-            print(e)
-            st.success(f"File {file.name}not able to save or processed!")
-
-
-
+        
+        with open(file_path, "wb") as f:
+            f.write(file.getvalue())
+        st.success(f"File {file.name} processed and saved to directory {constants.data}!")
+        
+        data_processor.processFile(file.name)
+        data_processor.close()
 
 def upload():
     st.title("File Upload for Case Studies and sales Calls")
@@ -278,8 +191,11 @@ def upload():
         upload_handler(call_file)
 
 def chatbot():
-    import openai
+    # import openai
     import json
+    import os
+    import openai
+
     from utils import LLM
     llm = LLM()    
     try:
@@ -309,7 +225,9 @@ def chatbot():
             query = st.text_input("Query: ", key="input")
             if query:
                 with st.spinner("typing..."):
-                    response = llm.QA(query, casedb_retriever,callsdb_retriever)
+
+                    response = llm.QA(query, casedb_retriever,callsdb_retriever,openai)
+
                 st.session_state.requests.append(query)
                 st.session_state.responses.append(response) 
         with response_container:
