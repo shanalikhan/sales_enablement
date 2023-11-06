@@ -291,7 +291,8 @@ class LLM:
                 response = json.loads(completion.choices[0].message.content)
                 try:
                     response=response['answer']
-                except:
+                except Exception as e:
+                    print(e)
                     response = 'i am not able to answer right now please try again'
             else:
                 response = response['answer']
