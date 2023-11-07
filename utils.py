@@ -152,12 +152,12 @@ class DataProcessor:
             # print('file data dump in vector db and entities db')
 
         elif file.endswith('mp4'):
-            status = self.audio_processor.convert_mp4_to_mp3(file_path,file_path.replace('mp4','mp3'))
+            status, mp3_path = self.audio_processor.convert_mp4_to_mp3(file_path,file_path.replace('mp4','mp3'))
             if status:
                 print('MP3 convervsion successfull')
                 os.remove(file_path)
                 print('mp4 file remvoed successfully')
-                text = self.audio_processor.transcribe_audio(file_path.replace('mp4','mp3'))
+                text = self.audio_processor.transcribe_audio(mp3_path)
                 text_list = text.split('.')
                 list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -176,7 +176,7 @@ class DataProcessor:
                 print('Three is issue with the video file please check')
 
         elif file.endswith('mp3'):
-            text = self.audio_processor.transcribe_audio(file_path)
+            text = self.audio_processor.transcribe_audio(file)
             text_list = text.split('.')
             list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -191,6 +191,8 @@ class DataProcessor:
             self.get_entities_and_dump(vectordb_dict, self.comprehend, constants.ner_threshold)
 
             print('file data dump in vector db and entities db')
+        else:
+            print('Three is issue with the audio file please check')
 
     def close(self):
         self.db_manager.close_connection()
@@ -202,7 +204,7 @@ class ChromaManager:
     def put_in_vectordb(self, db_directory, documents):
         try:
             if os.path.exists(db_directory) and os.path.isdir(db_directory):
-                vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings())
+                vectordb = Chroma(persist_directory=db_directory,embedding_function=OpenAIEmbeddings(model='gpt4'))
                 vectordb.add_documents(documents)
 
             else:
@@ -213,7 +215,7 @@ class ChromaManager:
 
     def get_retriever(self):
         if os.path.exists(constants.db_directory) and os.path.isdir(constants.db_directory):
-            vectordb = Chroma(persist_directory=constants.db_directory,embedding_function=OpenAIEmbeddings())
+            vectordb = Chroma(persist_directory=constants.db_directory,embedding_function=OpenAIEmbeddings(model='gpt4'))
 
             case_retriever = vectordb.as_retriever( search_kwargs={'k': 3})
             print('case study db retriver initialized')
@@ -243,7 +245,6 @@ class AudioProcessor:
             
             # Extract audio from video
             audio = video.audio
-            print(audio)
             
             # Export audio as mp3
             audio.write_audiofile(output_path, codec='mp3')
@@ -251,10 +252,10 @@ class AudioProcessor:
             # Close the clips
             video.close()
             audio.close()
-            return True
+            return True, output_path
         except Exception as e:
             print(e)
-            return False
+            return False, None
     
     def transcribe_audio(self,audio_path):
         try:
@@ -296,7 +297,7 @@ class LLM:
 
             case_prompt = self.prompt.format(context=context, question=query)
             
-            completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": case_prompt}])
+            completion = openai.ChatCompletion.create(model="gpt4", messages=[{"role": "user", "content": case_prompt}])
 
             response = json.loads(completion.choices[0].message.content)
             if response['found'] == False:
@@ -311,7 +312,7 @@ class LLM:
                     context += text
                 calls_prompt = self.prompt.format(context=context, question=query)
 
-                completion = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": calls_prompt}])
+                completion = openai.ChatCompletion.create(model="gpt4", messages=[{"role": "user", "content": calls_prompt}])
                 response = json.loads(completion.choices[0].message.content)
                 try:
                     response=response['answer']
