@@ -1,0 +1,5 @@
+WhisperService:
+  mode: offline
+  online:
+    api_endpoint: https://api.whisper-service.com
+    api_key: YOUR_API_KEY

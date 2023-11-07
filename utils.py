@@ -23,6 +23,8 @@ from langchain.prompts import PromptTemplate
 import constants
 import shutil
 
+import yaml
+
 class DataProcessor:
     def __init__(self, db_name='entities.db'):
         self.db_manager = DatabaseManager(db_name)
@@ -235,6 +237,9 @@ class ChromaManager:
 
 class AudioProcessor:
     def __init__(self):
+        with open(constants.config, 'r') as file:
+            data = yaml.safe_load(file)
+        self.mode = data['WhisperService']['mode']
         self.model = whisper.load_model("small")
         pass
 
