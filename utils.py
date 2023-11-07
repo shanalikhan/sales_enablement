@@ -21,6 +21,7 @@ import whisper
 import json
 from langchain.prompts import PromptTemplate
 import constants
+import shutil
 
 class DataProcessor:
     def __init__(self, db_name='entities.db'):
@@ -151,7 +152,28 @@ class DataProcessor:
             # print('file data dump in vector db and entities db')
 
         elif file.endswith('mp4'):
-            print('convert video to mp3 and same process')
+            status = self.audio_processor.convert_mp4_to_mp3(file_path,file_path.replace('mp4','mp3'))
+            if status:
+                print('MP3 convervsion successfull')
+                os.remove(file_path)
+                print('mp4 file remvoed successfully')
+                text = self.audio_processor.transcribe_audio(file_path.replace('mp4','mp3'))
+                text_list = text.split('.')
+                list_of_documents = self.get_sentence_split(text_list,file)
+
+                chroma_manager.put_in_vectordb(constants.db_directory2, list_of_documents)
+
+                vectordb_dict = {'metadatas':[],'documents':[]}
+
+                for doc in list_of_documents:
+                    vectordb_dict['documents'].append(doc.page_content)
+                    vectordb_dict['metadatas'].append(doc.metadata)
+
+                self.get_entities_and_dump(vectordb_dict, self.comprehend, constants.ner_threshold)
+
+                print('file data dump in vector db and entities db')
+            else:
+                print('Three is issue with the video file please check')
 
         elif file.endswith('mp3'):
             text = self.audio_processor.transcribe_audio(file_path)
@@ -211,7 +233,7 @@ class ChromaManager:
 
 class AudioProcessor:
     def __init__(self):
-        # self.model = whisper.load_model("large")
+        self.model = whisper.load_model("small")
         pass
 
     def convert_mp4_to_mp3(self, video_path, output_path):
@@ -221,6 +243,7 @@ class AudioProcessor:
             
             # Extract audio from video
             audio = video.audio
+            print(audio)
             
             # Export audio as mp3
             audio.write_audiofile(output_path, codec='mp3')
@@ -230,6 +253,7 @@ class AudioProcessor:
             audio.close()
             return True
         except Exception as e:
+            print(e)
             return False
     
     def transcribe_audio(self,audio_path):

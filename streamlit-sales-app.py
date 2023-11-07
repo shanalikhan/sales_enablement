@@ -166,7 +166,7 @@ def upload_handler(file, calls=False):
 
     file_path = os.path.join(os.getcwd(),constants.data, file.name)
 
-    if file.name.endswith('txt') or file.name.endswith('pdf') or file.name.endswith('docs'):
+    if file.name.endswith('txt') or file.name.endswith('pdf') or file.name.endswith('docs') or file.name.endswith('mp4') or file.name.endswith('mp3'):
         
         with open(file_path, "wb") as f:
             f.write(file.getvalue())
