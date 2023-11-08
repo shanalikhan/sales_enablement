@@ -1,16 +1,13 @@
+""" file to ingest data into vector dbs and entity db"""
 import os
-import constants
-from tqdm import tqdm
-from utils import  DataProcessor
-
 from dotenv import load_dotenv
-
+from tqdm import tqdm
+import constants
+from utils import  DataProcessor
 from create_db import DatabaseManager
-db_manager = DatabaseManager()
-db_manager.create_tables()
-db_manager.close_connection()
 
 def start_data_ingestion():
+    """" function that takes directory and put in db"""
 
     db_manager = DatabaseManager()
     db_manager.create_tables()
@@ -24,18 +21,18 @@ def start_data_ingestion():
     else:
         print("OPENAI_API_KEY is set")
 
-    if os.path.exists(constants.data) and os.path.isdir(constants.data):
+    if os.path.exists(constants.DATA) and os.path.isdir(constants.DATA):
         print('Variables Initializing...')
 
         data_processor = DataProcessor()
 
         print('Data ingestion process has been started... PLease wait. ')
         cwd = os.getcwd()
-        paths = [os.path.join(cwd,constants.data)]
+        paths = [os.path.join(cwd,constants.DATA)]
 
         for path in paths:
             for file in tqdm(os.listdir(path)):
-                data_processor.processFile(file)
+                data_processor.process_file(file)
 
         data_processor.close()
 
@@ -44,11 +41,6 @@ def start_data_ingestion():
     else:
         print('Data ingestion process has been Paused... PLease Check your data path. ')
     
-
-
-
-
-
 
 # Example usage:
 if __name__ == '__main__':
