@@ -15,6 +15,8 @@ else:
 
 import openai
 
+os.makedirs(constants.DATA, exist_ok=True)
+
 # Define a function for each page
 def home_page():
     """ Smart Search funtion"""
