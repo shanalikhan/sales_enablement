@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y python3.8-dev && apt install -y python3
 RUN apt-get update && pip install --upgrade pip
 RUN apt-get update && apt-get install -y git
 RUN apt-get update && apt-get install -y awscli
+RUN apt-get update && apt-get install -y ffmpeg
 
 RUN apt-get update && python3.8 -m pip install -r requirements.txt
 
