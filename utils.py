@@ -207,6 +207,7 @@ class DataProcessor:
 
         elif file.endswith('mp3'):
             text = self.audio_processor.transcribe_audio(file_path, openai)
+            print(text)
             text_list = text.split('.')
             list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -439,11 +440,11 @@ class AudioProcessor:
         right_output_path = os.path.join(output_dir, right_output_path)
 
         if channels == 2:
-            left_boundaries = self.VAD.get_speech_segments(left_output_path)
-            right_boundaries = self.VAD.get_speech_segments(right_output_path)
+            left_boundaries = self.VAD.get_speech_segments(left_output_path,large_chunk_size=15,small_chunk_size=10)
+            right_boundaries = self.VAD.get_speech_segments(right_output_path,large_chunk_size=15,small_chunk_size=10)
             return left_boundaries, right_boundaries
         else:
-            left_boundaries = self.VAD.get_speech_segments(left_output_path)
+            left_boundaries = self.VAD.get_speech_segments(left_output_path,large_chunk_size=15,small_chunk_size=10)
             return left_boundaries, None
             
     def get_segments(self, left_output_path, right_output_path, left_boundaries,right_boundaries, channels, output_dir='audio_chunks'):
