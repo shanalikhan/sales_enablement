@@ -9,3 +9,7 @@ CONFIG = 'config.yaml'
 NER_THRESHOLD = 0.90
 
 FILE_NAME = 'PS - Competencies Management.xlsx'
+
+LEFT_AUDIO_PATH = 'left_audio.wav'
+RIGHT_AUDIO_PATH ='right_audio.wav'
+CHUNKS_DIRECTORY = 'audio_chunks'

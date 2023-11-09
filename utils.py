@@ -7,8 +7,13 @@ from langchain.vectorstores import Chroma
 from langchain.docstore.document import Document
 from langchain.prompts import PromptTemplate
 from create_db import DatabaseManager
+from pydub.utils import mediainfo
+from pydub import AudioSegment
+import torchaudio
 import pandas as pd
 from tqdm import tqdm
+from speechbrain.pretrained import VAD
+import uuid
 import boto3
 import whisper
 import json
@@ -148,10 +153,10 @@ class DataProcessor:
 
         return text
 
-    def process_file(self,file):
+    def process_file(self,file, openai):
         """ Function is the part of data ingestion and takes file by file"""
         chroma_manager = ChromaManager()
-
+        os.makedirs(constants.DATA, exist_ok=True)
         file_path = os.path.join(os.getcwd(),constants.DATA, file)
 
         if file.endswith('txt') or file.endswith('pdf') or file.endswith('docs'):
@@ -181,7 +186,8 @@ class DataProcessor:
                 print('MP3 convervsion successfull')
                 os.remove(file_path)
                 print('mp4 file remvoed successfully')
-                text = self.audio_processor.transcribe_audio(mp3_path)
+                
+                text = self.audio_processor.transcribe_audio(mp3_path, openai)
                 text_list = text.split('.')
                 list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -200,7 +206,7 @@ class DataProcessor:
                 print('Three is issue with the video file please check')
 
         elif file.endswith('mp3'):
-            text = self.audio_processor.transcribe_audio(file)
+            text = self.audio_processor.transcribe_audio(file_path, openai)
             text_list = text.split('.')
             list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -283,8 +289,12 @@ class AudioProcessor:
         with open(constants.CONFIG, 'r') as file:
             data = yaml.safe_load(file)
         self.mode = data['WhisperService']['mode']
-        self.model = whisper.load_model("small")
-        pass
+
+        if self.mode == 'offline':
+            self.model = whisper.load_model("small")
+        else:
+            self.VAD = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", savedir="pretrained_models/vad-crdnn-libriparty")
+            self.model= None
 
     def convert_mp4_to_mp3(self, video_path, output_path):
         """ Function used to convert mp4 video to mp3 audio"""
@@ -306,24 +316,164 @@ class AudioProcessor:
             print(e)
             return False, None
 
-    def transcribe_audio(self,audio_path):
+    def transcribe_audio(self,audio_path,openai):
         """ Function used to transcribe the audio into text using whisper model"""
         try:
-            result = self.model.transcribe(audio_path,language="en")
-            text  = result['text']
+            if self.mode == 'offline':
+                result = self.model.transcribe(audio_path,language="en")
+                text  = result['text']
+            else:
+                df = pd.DataFrame(columns=['id', 'start','end', 'text'])
+                channels = self.separate_channels(audio_path,
+                constants.LEFT_AUDIO_PATH,
+                constants.RIGHT_AUDIO_PATH,
+                constants.CHUNKS_DIRECTORY
+                )
+                left_boundries, right_boundries = self.get_boundries(constants.LEFT_AUDIO_PATH,
+                constants.RIGHT_AUDIO_PATH,
+                channels,
+                constants.CHUNKS_DIRECTORY)
+
+                left_segments, right_segments = self.get_segments(constants.LEFT_AUDIO_PATH,
+                constants.RIGHT_AUDIO_PATH,
+                left_boundries,
+                right_boundries,
+                channels,
+                constants.CHUNKS_DIRECTORY)
+
+                if channels == 2:
+                    df = self.save_segments(left_segments,
+                    left_boundries,
+                    df,
+                    constants.CHUNKS_DIRECTORY
+                    )
+                    df = self.save_segments(right_segments,
+                    right_boundries,
+                    df,
+                    constants.CHUNKS_DIRECTORY)
+                else:
+                    df = self.save_segments(left_segments,
+                    left_boundries,
+                    df,
+                    constants.CHUNKS_DIRECTORY
+                    )
+
+                df['start'] = df['start'].astype(float)
+                df['end'] = df['end'].astype(float)
+
+                df['start'] = df['start'].round(2)
+                df['end'] = df['end'].round(2)
+
+                df.drop_duplicates(subset=['start', 'end'], keep='first',inplace=True)
+                df.sort_values(by='start',inplace=True)
+
+                df['text'] = df['id'].apply(lambda x: self.autdio_transcription_to_text(x, openai, constants.CHUNKS_DIRECTORY))
+                text = df['text'].str.cat(sep=' ')
 
             return text
         except Exception as e:
             print(e)
             return False
 
-    def check_audio_channels(self, audio_path):
-        """ Function used check the audio chennels"""
-        # Get audio information using pydub's mediainfo
-        info = mediainfo(audio_path)
+    def autdio_transcription_to_text(self, file_id, openai, output_dir='audio_chunks'):
+        file_path = os.path.join(output_dir, str(file_id))
+        file_path +='.wav'
+        file = open(file_path, "rb")
+        transcription = openai.Audio.transcribe("whisper-1", file, language='en')
+        return transcription['text']
+    def save_segments(self, segments, boundaries, df, output_dir='audio_chunks', sample_rate=16000):
+        """
+        Saves the segments as audio files.
 
-        # Return the number of channels
-        return int(info['channels'])
+        Arguments:
+        segments -- List of tensors containing the audio segments.
+        sample_rate -- The sample rate of the original audio file.
+        output_dir -- Directory where the audio segments will be saved.
+        """
+        # Ensure the output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Iterate over the segments and save each one as a WAV file
+        for i, (segment,duration) in tqdm(enumerate(zip(segments,boundaries))):
+            random_uuid = uuid.uuid4()
+            # Define the path for the output file
+            output_file_path = os.path.join(output_dir, f"{random_uuid}.wav")
+            
+            df2 = pd.DataFrame([[random_uuid,f'{duration[0]}',f'{duration[1]}', '']], columns=['id', 'start','end', 'text'])
+            
+            df = pd.concat([df, df2], ignore_index=True)
+            # Save the tensor as a WAV file
+            torchaudio.save(output_file_path, segment, sample_rate)
+        return df
+
+    def separate_channels(self, audio_path, left_output_path, right_output_path, output_dir='audio_chunks', frame_rate= 16000):
+        # Load the audio file using pydub
+        os.makedirs(output_dir, exist_ok=True)
+
+        audio = AudioSegment.from_mp3(audio_path)
+        audio = audio.set_frame_rate(frame_rate)
+
+        left_output_path = os.path.join(output_dir, left_output_path)
+        right_output_path = os.path.join(output_dir, right_output_path)
+        # Check if the audio is stereo
+        if audio.channels == 2:
+            # Split the stereo audio into its left and right channels
+            channels = audio.split_to_mono()
+            
+            # Save the left and right channels to separate files
+            channels[0].export(left_output_path, format="wav")
+            channels[1].export(right_output_path, format="wav")
+            
+            print(f"Left channel saved to {left_output_path}")
+            print(f"Right channel saved to {right_output_path}")
+            
+            return audio.channels
+        else:
+            audio.export(left_output_path, format="wav")
+            print(f"Mono audio saved to {left_output_path}")
+            return audio.channels
+        return 0
+
+    def get_boundries(self, left_output_path, right_output_path, channels, output_dir='audio_chunks'):
+        left_output_path = os.path.join(output_dir, left_output_path)
+        right_output_path = os.path.join(output_dir, right_output_path)
+
+        if channels == 2:
+            left_boundaries = self.VAD.get_speech_segments(left_output_path)
+            right_boundaries = self.VAD.get_speech_segments(right_output_path)
+            return left_boundaries, right_boundaries
+        else:
+            left_boundaries = self.VAD.get_speech_segments(left_output_path)
+            return left_boundaries, None
+            
+    def get_segments(self, left_output_path, right_output_path, left_boundaries,right_boundaries, channels, output_dir='audio_chunks'):
+        left_output_path = os.path.join(output_dir, left_output_path)
+        right_output_path = os.path.join(output_dir, right_output_path)
+        if channels == 2:
+            left_segments = self.VAD.get_segments(left_boundaries,left_output_path)
+            right_segments = self.VAD.get_segments(left_boundaries,right_output_path)
+            return left_segments, right_segments
+        else:
+            left_segments = self.VAD.get_segments(left_boundaries,left_output_path)
+            return left_segments, None
+            
+    def get_audio_info(self, audio_file_path):
+        audio = AudioSegment.from_file(audio_file_path)
+
+        # Extract bit rate (in bits per second)
+        bit_rate = audio.frame_rate * audio.frame_width * 8
+
+        # Extract sample rate (in samples per second)
+        sample_rate = audio.frame_rate
+
+        # Extract number of channels
+        channels = audio.channels
+
+        return {
+            "bit_rate": bit_rate,
+            "sample_rate": sample_rate,
+            "channels": channels
+        }
 
 class LLM:
     """ Class used for chat with LLM"""

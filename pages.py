@@ -133,7 +133,7 @@ def upload_handler(file):
             f.write(file.getvalue())
         st.success(f"File {file.name} processed and saved to directory {constants.DATA}!")
 
-        data_processor.process_file(file.name)
+        data_processor.process_file(file.name, openai)
         data_processor.close()
 
 def upload():
