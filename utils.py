@@ -21,6 +21,7 @@ import constants
 import yaml
 import re
 import os
+import shutil
 
 session = boto3.Session(profile_name='AE')
 
@@ -207,7 +208,7 @@ class DataProcessor:
 
         elif file.endswith('mp3'):
             text = self.audio_processor.transcribe_audio(file_path, openai)
-            print(text)
+            # print(text)
             text_list = text.split('.')
             list_of_documents = self.get_sentence_split(text_list,file)
 
@@ -368,20 +369,28 @@ class AudioProcessor:
                 df.drop_duplicates(subset=['start', 'end'], keep='first',inplace=True)
                 df.sort_values(by='start',inplace=True)
 
-                df['text'] = df['id'].apply(lambda x: self.autdio_transcription_to_text(x, openai, constants.CHUNKS_DIRECTORY))
+                df['text'] = df['id'].apply(lambda x: self.audio_transcription_to_text(x, openai, constants.CHUNKS_DIRECTORY))
                 text = df['text'].str.cat(sep=' ')
+                try:
+                    shutil.rmtree(constants.CHUNKS_DIRECTORY)
+                    print(f"Directory '{constants.CHUNKS_DIRECTORY}' and all its contents have been removed")
+                except OSError as error:
+                    print(f"Error: {error}")
+                    print(f"Failed to remove directory '{constants.CHUNKS_DIRECTORY}' and its contents")
 
             return text
         except Exception as e:
             print(e)
             return False
 
-    def autdio_transcription_to_text(self, file_id, openai, output_dir='audio_chunks'):
+    def audio_transcription_to_text(self, file_id, openai, output_dir='audio_chunks'):
+        """ Function used to transcribe the audio into text using whisper online model"""
         file_path = os.path.join(output_dir, str(file_id))
         file_path +='.wav'
         file = open(file_path, "rb")
         transcription = openai.Audio.transcribe("whisper-1", file, language='en')
         return transcription['text']
+
     def save_segments(self, segments, boundaries, df, output_dir='audio_chunks', sample_rate=16000):
         """
         Saves the segments as audio files.
@@ -408,6 +417,7 @@ class AudioProcessor:
         return df
 
     def separate_channels(self, audio_path, left_output_path, right_output_path, output_dir='audio_chunks', frame_rate= 16000):
+        """ Function used to separate audio channels"""
         # Load the audio file using pydub
         os.makedirs(output_dir, exist_ok=True)
 
@@ -436,18 +446,26 @@ class AudioProcessor:
         return 0
 
     def get_boundries(self, left_output_path, right_output_path, channels, output_dir='audio_chunks'):
+        """ Function used to get VAD boundries"""
         left_output_path = os.path.join(output_dir, left_output_path)
         right_output_path = os.path.join(output_dir, right_output_path)
 
         if channels == 2:
-            left_boundaries = self.VAD.get_speech_segments(left_output_path,large_chunk_size=15,small_chunk_size=10)
-            right_boundaries = self.VAD.get_speech_segments(right_output_path,large_chunk_size=15,small_chunk_size=10)
+            left_boundaries = self.VAD.get_speech_segments(left_output_path,
+            large_chunk_size=15,
+            small_chunk_size=10
+            )
+            right_boundaries = self.VAD.get_speech_segments(right_output_path,
+            large_chunk_size=15,
+            small_chunk_size=10
+            )
             return left_boundaries, right_boundaries
         else:
             left_boundaries = self.VAD.get_speech_segments(left_output_path,large_chunk_size=15,small_chunk_size=10)
             return left_boundaries, None
             
     def get_segments(self, left_output_path, right_output_path, left_boundaries,right_boundaries, channels, output_dir='audio_chunks'):
+        """ Function used to get VAD boundries segments"""
         left_output_path = os.path.join(output_dir, left_output_path)
         right_output_path = os.path.join(output_dir, right_output_path)
         if channels == 2:
@@ -459,6 +477,7 @@ class AudioProcessor:
             return left_segments, None
             
     def get_audio_info(self, audio_file_path):
+        """ Function used to get audio detials"""
         audio = AudioSegment.from_file(audio_file_path)
 
         # Extract bit rate (in bits per second)
@@ -508,7 +527,7 @@ class LLM:
             case_prompt = self.prompt.format(context=context, question=query)
 
             completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=[
                     {"role": "user",
                     "content": case_prompt
@@ -535,7 +554,7 @@ class LLM:
                     )
 
                 completion = openai.ChatCompletion.create(
-                    model = "gpt-3.5-turbo",
+                    model = "gpt-4",
                     messages=[
                         {"role": "user",
                         "content": calls_prompt
