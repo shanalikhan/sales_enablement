@@ -122,7 +122,7 @@ def home_page():
         else:
             st.dataframe(result_df.head(5))
 
-def upload_handler(file):
+def upload_handler(file, client_name):
     """ uploader function used for data ingestion"""
     data_processor = DataProcessor()
 
@@ -133,27 +133,24 @@ def upload_handler(file):
             f.write(file.getvalue())
         st.success(f"File {file.name} processed and saved to directory {constants.DATA}!")
 
-        data_processor.process_file(file.name, openai)
-        data_processor.close()
+        data_processor.process_file(file.name,client_name, openai)
+    data_processor.close()
 
-def upload():
+def upload(data):
+
     """ function used to for upload section of app"""
     st.title("File Upload for Case Studies and sales Calls")
 
     # Upload widget for case studies
-    st.subheader("Upload a Case Study (PDF,TEXT,DOCS) only")
-    case_study_file = st.file_uploader("Choose a video file", type=["txt", "pdf", "docs"])
-    if case_study_file:
-        upload_handler(case_study_file)
+    st.subheader("Upload a Case Study or Sales Calls (PDF,TEXT,DOCS,MP3,MP4) only")
+    case_study_file = st.file_uploader("Choose a video file", type=["txt", "pdf", "docs","mp4", "mp3"])
+    client_name = st.text_input("Client Name")
+    if case_study_file and client_name:
+        upload_handler(case_study_file, client_name)
 
-    # Upload widget for calls
-    st.subheader("Upload a sales Call (Video or MP3 audio)")
-    call_file = st.file_uploader(
-        "Choose a video or audio file",
-        type=["mp4", "mkv", "avi", "mov", "mp3"]
-        )
-    if call_file:
-        upload_handler(call_file)
+    df = pd.DataFrame(data, columns=['Document Id', 'Document Name', 'Client Name'])
+    st.title('Client Documents')
+    st.table(df[['Document Name', 'Client Name']])
 
 def chatbot(llm, casedb_retriever, callsdb_retriever, message):
     """Function used for chatbot feature"""

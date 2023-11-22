@@ -20,6 +20,7 @@ import yaml
 import re
 import os
 import shutil
+import traceback
 
 session = boto3.Session(profile_name='AE')
 
@@ -29,6 +30,7 @@ class DataProcessor:
 
     def __init__(self, db_name='entities.db'):
         self.db_manager = DatabaseManager(db_name)
+        self.db_manager.create_tables()
         self.comprehend = session.client('comprehend')
         self.audio_processor = AudioProcessor()
 
@@ -91,16 +93,14 @@ class DataProcessor:
             loader = TextLoader(text_path)
         return loader
 
-    def get_entities_and_dump(self, data, comprehend, ner_threshold = 0.90):
+    def get_entities_and_dump(self, data, comprehend, document_id, ner_threshold = 0.90):
         """ function takes documents and put them into db with their respective entities"""
 
         for metadatas, documents in tqdm(zip(data['metadatas'], data['documents'])):
             try:
                 reference_document = metadatas['source']
-                doc_name = "_".join(reference_document.split('_')[1:])
-                if doc_name == '':
-                    doc_name = reference_document
-                self.db_manager.insert_into_documents(doc_name, metadatas['source'])
+
+                self.db_manager.insert_into_documents(document_id, reference_document)
                 # Extract entities here
                 response = comprehend.detect_entities(Text=documents, LanguageCode='en')
 
@@ -109,6 +109,7 @@ class DataProcessor:
                         self.db_manager.insert_into_entities(dic['Text'], reference_document)
             except Exception as e:
                 print(e)
+                print(traceback.format_exc())
 
 
     @staticmethod
@@ -152,11 +153,24 @@ class DataProcessor:
 
         return text
 
-    def process_file(self,file, openai):
+    def update_client_table(self, file_name, client_name):
+        try:
+            self.db_manager.insert_into_clients(file_name, client_name)
+            condition = f"WHERE document_name = '{file_name}' AND client_name = '{client_name}'"
+            data = self.db_manager.select_all_from_table(table_name = 'Clients', condition=condition)
+            return data[0][0]
+            
+        except Exception as e:
+            print(e)
+            print(traceback.format_exc())
+            return False
+
+    def process_file(self,file, client_name, openai):
         """ Function is the part of data ingestion and takes file by file"""
         chroma_manager = ChromaManager()
         os.makedirs(constants.DATA, exist_ok=True)
         file_path = os.path.join(os.getcwd(),constants.DATA, file)
+        document_id = self.update_client_table(file,client_name)
 
         if file.endswith('txt') or file.endswith('pdf') or file.endswith('docs'):
             loader = self.get_text_from_file(file_path)
@@ -171,7 +185,7 @@ class DataProcessor:
                 vectordb_dict['documents'].append(doc.page_content)
                 vectordb_dict['metadatas'].append(doc.metadata)
 
-            self.get_entities_and_dump(vectordb_dict, self.comprehend, constants.NER_THRESHOLD)
+            self.get_entities_and_dump(vectordb_dict, self.comprehend, document_id, constants.NER_THRESHOLD)
 
             # print('file data dump in vector db and entities db')
 
@@ -253,6 +267,7 @@ class ChromaManager:
             vectordb.persist()
         except Exception as e:
             print(e)
+            print(traceback.format_exc())
 
     def get_retriever(self):
         """ Function used initialize the vectordb retireivers objects"""
@@ -317,6 +332,7 @@ class AudioProcessor:
             return True, output_path
         except Exception as e:
             print(e)
+            print(traceback.format_exc())
             return False, None
 
     def transcribe_audio(self,audio_path,openai):
@@ -385,6 +401,7 @@ class AudioProcessor:
             return text
         except Exception as e:
             print(e)
+            print(traceback.format_exc())
             return False
 
     def audio_transcription_to_text(self, file_id, openai, output_dir='audio_chunks'):
@@ -574,11 +591,13 @@ class LLM:
                     response=response['answer']
                 except Exception as e:
                     print(e)
+                    print(traceback.format_exc())
                     response = 'i am not able to answer right now please try again'
             else:
                 response = response['answer']
         except Exception as e:
             print(e)
+            print(traceback.format_exc())
             response = 'i am not able to answer right now please try again'
         return response
     def close(self):

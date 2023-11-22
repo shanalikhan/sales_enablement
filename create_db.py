@@ -23,10 +23,21 @@ class DatabaseManager:
 
             # Create a new table for Documents
             cursor.execute('''
-            CREATE TABLE IF NOT EXISTS Documents (
+            CREATE TABLE IF NOT EXISTS Clients (
                 document_id INTEGER PRIMARY KEY,
                 document_name TEXT,
-                reference_document TEXT
+                client_name TEXT
+            )
+            ''')
+
+            print('Table Documents created successfully')
+
+            # Create a new table for Documents
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Documents (
+                document_chunk_id INTEGER PRIMARY KEY,
+                document_id INTEGER,
+                document_chunk_name TEXT
             )
             ''')
             print('Table Documents created successfully')
@@ -54,17 +65,25 @@ class DatabaseManager:
         ''', (entity, reference_document))
         self.conn.commit()
 
-    def insert_into_documents(self, doc_name, reference_document):
+    def insert_into_clients(self, doc_name, client_name):
         cursor = self.conn.cursor()
         cursor.execute('''
-        INSERT INTO Documents (document_name, reference_document)
+        INSERT INTO Clients (document_name, client_name)
         VALUES (?, ?)
-        ''', (doc_name, reference_document))
+        ''', (doc_name, client_name))
         self.conn.commit()
 
-    def select_all_from_table(self, table_name='Entities'):
+    def insert_into_documents(self, doc_id, reference_document):
         cursor = self.conn.cursor()
-        cursor.execute(f'SELECT * FROM {table_name}')
+        cursor.execute('''
+        INSERT INTO Documents (document_id, document_chunk_name)
+        VALUES (?, ?)
+        ''', (doc_id, reference_document))
+        self.conn.commit()
+
+    def select_all_from_table(self, table_name='Entities', condition=''):
+        cursor = self.conn.cursor()
+        cursor.execute(f'SELECT * FROM {table_name} {condition}')
         rows = cursor.fetchall()
         return rows
 

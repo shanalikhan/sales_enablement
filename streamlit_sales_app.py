@@ -3,7 +3,6 @@ import streamlit as st
 from streamlit_chat import message
 from pages import home_page, chatbot, upload
 from utils import ChromaManager, LLM
-
 chroma_manager = ChromaManager()
 llm = LLM()
 
@@ -48,6 +47,7 @@ elif st.session_state.page == 'chatbot':
     st.session_state.message
     )
 elif st.session_state.page == 'Upload':
-    upload()
+    data = llm.data_processor.db_manager.select_all_from_table(table_name='Clients')
+    upload(data)
 
 llm.close()
