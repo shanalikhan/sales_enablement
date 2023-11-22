@@ -1,18 +1,16 @@
 '''utils file for AE app'''
 from moviepy.editor import VideoFileClip
-from pydub.utils import mediainfo
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
+from speechbrain.pretrained import VAD
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.docstore.document import Document
 from langchain.prompts import PromptTemplate
 from create_db import DatabaseManager
-from pydub.utils import mediainfo
 from pydub import AudioSegment
 import torchaudio
 import pandas as pd
 from tqdm import tqdm
-from speechbrain.pretrained import VAD
 import uuid
 import boto3
 import whisper
@@ -295,7 +293,10 @@ class AudioProcessor:
         if self.mode == 'offline':
             self.model = whisper.load_model("small")
         else:
-            self.VAD = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", savedir="pretrained_models/vad-crdnn-libriparty")
+            self.VAD = VAD.from_hparams(
+                source="speechbrain/vad-crdnn-libriparty",
+                savedir="pretrained_models/vad-crdnn-libriparty"
+                )
             self.model= None
 
     def convert_mp4_to_mp3(self, video_path, output_path):
@@ -366,7 +367,10 @@ class AudioProcessor:
                 df['start'] = df['start'].round(2)
                 df['end'] = df['end'].round(2)
 
-                df.drop_duplicates(subset=['start', 'end'], keep='first',inplace=True)
+                df.drop_duplicates(
+                    subset=['start', 'end'],
+                    keep='first',inplace=True
+                    )
                 df.sort_values(by='start',inplace=True)
 
                 df['text'] = df['id'].apply(lambda x: self.audio_transcription_to_text(x, openai, constants.CHUNKS_DIRECTORY))
@@ -430,14 +434,14 @@ class AudioProcessor:
         if audio.channels == 2:
             # Split the stereo audio into its left and right channels
             channels = audio.split_to_mono()
-            
+
             # Save the left and right channels to separate files
             channels[0].export(left_output_path, format="wav")
             channels[1].export(right_output_path, format="wav")
-            
+
             print(f"Left channel saved to {left_output_path}")
             print(f"Right channel saved to {right_output_path}")
-            
+
             return audio.channels
         else:
             audio.export(left_output_path, format="wav")
@@ -461,9 +465,13 @@ class AudioProcessor:
             )
             return left_boundaries, right_boundaries
         else:
-            left_boundaries = self.VAD.get_speech_segments(left_output_path,large_chunk_size=15,small_chunk_size=10)
+            left_boundaries = self.VAD.get_speech_segments(
+                left_output_path,
+                large_chunk_size=15,
+                small_chunk_size=10
+                )
             return left_boundaries, None
-            
+
     def get_segments(self, left_output_path, right_output_path, left_boundaries,right_boundaries, channels, output_dir='audio_chunks'):
         """ Function used to get VAD boundries segments"""
         left_output_path = os.path.join(output_dir, left_output_path)
@@ -574,6 +582,7 @@ class LLM:
             response = 'i am not able to answer right now please try again'
         return response
     def close(self):
+        "Function used to close the db connection"
         self.data_processor.close()
 
 
