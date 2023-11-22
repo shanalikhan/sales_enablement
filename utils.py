@@ -13,7 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 import uuid
 import boto3
-import whisper
+# import whisper
 import json
 import constants
 import yaml
